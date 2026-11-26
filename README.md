@@ -26,7 +26,15 @@ Built on [GPUI](https://github.com/zed-industries/zed) (Zed's GPU-accelerated UI
 | **Built-in browser** | `⇧⌘B`. Desktop, iPhone, Pixel and iPad views with the matching user agent and viewport, rotation, auto-fit scaling, and Web Inspector. |
 | **HTTP client** (Thunder Client-style) | `⌥⌘H`. Method, URL, headers, JSON body and Bearer auth. Pretty-printed, highlighted responses with status, time and size, plus request history. |
 | **Optional AI** | Off by default. Turn it on from the palette (*AI: Set Up Assistant*) with your own key for **Claude**, **ChatGPT** or **Gemini**. Answers stream in a side panel, and the open file can be included as context. |
-| **Command palette / quick open** | `⌘P` for files (fuzzy), `>` for commands, `:` to go to a line. `⇧⌘P` opens directly into commands. |
+| **Code intelligence (LSP)** | Uses language servers already on your machine: rust-analyzer, pyright/basedpyright/pylsp, typescript-language-server, gopls, clangd and sourcekit-lsp (both ship with Xcode), html/css/json servers, lua, zig, bash, java, ruby, php, yaml, toml, kotlin, dart, svelte, C#, Haskell, Elixir. You get completions, hover docs, go to definition (`F12` / ⌘-click) and live errors and warnings. |
+| **Problems panel** | `⇧⌘M`, or the error/warning counts in the status line. Click an entry to jump to it. |
+| **Source control** | `⌃⇧G`. Changed files with status, click for a diff (syntax highlighted), stage/unstage per file or all, discard (with confirmation), commit (`⌘↩`, commits all when nothing is staged), pull, push, ahead/behind counts. |
+| **Editing** | `⌘/` toggle comment · `⌥↑/↓` move line · `⇧⌥↑/↓` duplicate line · `⇧⌘K` delete line · `⌘D` select next occurrence · `⌥⌘↑/↓` add cursor · `⌘F` / `⌥⌘F` find and replace. Trim trailing whitespace and insert a final newline on save. |
+| **Workflow** | Tabs restore per project · `⇧⌘T` reopens a closed tab · open files reload when changed on disk · drag files or folders onto the window · `⌘=` `⌘-` `⌘0` zoom · `⌘K Z` zen mode · `⌘K ⌘S` keyboard shortcuts. |
+| **Tasks** | `⌥⌘R` runs project tasks: npm/yarn/pnpm/bun scripts, Cargo, Go, Swift, Make, just, Deno, pytest, docker compose. |
+| **Go to symbol** | `⇧⌘O`, or `@` in the palette. Works instantly with or without a language server. |
+| **Markdown preview** | `⇧⌘V`. Live side-by-side preview. |
+| **Command palette / quick open** | `⌘P` for files (fuzzy), `>` for commands, `@` for symbols, `:` to go to a line. `⇧⌘P` opens directly into commands. |
 | **Find in files** | `⇧⌘F`. Respects `.gitignore`. |
 | **Themes & customization** | 18 built-in themes (Orion, Nebula, Aurora, Midnight, Supernova, Andromeda, Event Horizon, Mars, Saturn, Neptune, Pulsar, Titan, Galaxy, Comet, Lunar, Polaris, Cosmic Latte, Solstice), a **Custom theme** editor with color pickers for every UI and syntax color, drop-in JSON themes, accent colors, Glass/Solid window with Clear/Frosted/Tinted strength, fonts and sizes. All in Settings (gear in the title bar, or `⌘,`), applied instantly. |
 | **Word wrap** | One click on **Wrap** in the status bar, `⌥Z`, or the Settings switch. |
@@ -101,6 +109,11 @@ src/
   main.rs          app bootstrap, theme, fonts
   workspace.rs     window layout, tabs, actions, keybindings, menus
   explorer.rs      file tree with watcher and file operations
+  lsp.rs           language server client (JSON-RPC over stdio) + editor providers
+  git.rs           source control panel and git operations
+  editing.rs       editor commands (comment, move/duplicate/delete line, …)
+  tasks.rs         project task detection
+  symbols.rs       symbol outline for go to symbol
   palette.rs       quick open / commands / go to line
   search.rs        find in files
   terminal.rs      terminal emulator view (alacritty_terminal)
@@ -117,7 +130,7 @@ script/
   settings.rs      settings and session persistence
   settings_view.rs Settings tab
 vendor/
-  gpui-base        GPUI Kit base, patched: rainbow indent guides
+  gpui-base        GPUI Kit base, patched: rainbow indent guides, public batch edits
   gpui-component   GPUI Kit components, patched: tree-sitter + syntect highlighting, transparent root
 ```
 

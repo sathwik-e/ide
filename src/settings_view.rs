@@ -435,7 +435,9 @@ impl Render for SettingsView {
                                 cx,
                             ))
                             .child(row("Format on save", "Prettier and native formatters", toggle("set-fmt", s.format_on_save, |s, v| s.format_on_save = v), cx))
-                            .child(row("Auto save", "Save shortly after you stop typing", toggle("set-autosave", s.auto_save, |s, v| s.auto_save = v), cx)),
+                            .child(row("Auto save", "Save shortly after you stop typing", toggle("set-autosave", s.auto_save, |s, v| s.auto_save = v), cx))
+                            .child(row("Trim trailing whitespace", "On save", toggle("set-trim", s.trim_trailing_whitespace, |s, v| s.trim_trailing_whitespace = v), cx))
+                            .child(row("Insert final newline", "On save", toggle("set-final-nl", s.insert_final_newline, |s, v| s.insert_final_newline = v), cx)),
                     )
                     .child(
                         section("Code Runner", cx)

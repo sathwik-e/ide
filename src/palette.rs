@@ -15,7 +15,7 @@ use nucleo_matcher::{
     pattern::{CaseMatching, Normalization, Pattern},
 };
 
-use crate::icons;
+use crate::{icons, symbols::Symbol, tasks::ProjectTask};
 
 pub struct CommandEntry {
     pub label: SharedString,
@@ -27,6 +27,7 @@ pub enum PaletteEvent {
     OpenFile(PathBuf),
     Run(Box<dyn Action>),
     GoToLine(u32, u32),
+    RunTask(String),
     Dismiss,
 }
 
@@ -37,6 +38,8 @@ enum Item {
     File { rel: String },
     Command { ix: usize },
     Line { line: u32, col: u32 },
+    Symbol { ix: usize },
+    Task { ix: usize },
 }
 
 pub struct Palette {
@@ -44,6 +47,8 @@ pub struct Palette {
     root: Option<PathBuf>,
     files: Vec<String>,
     commands: Vec<CommandEntry>,
+    symbols: Vec<Symbol>,
+    tasks: Option<Vec<ProjectTask>>,
     items: Vec<Item>,
     selected: usize,
     scroll: UniformListScrollHandle,
@@ -57,13 +62,17 @@ impl Palette {
         root: Option<PathBuf>,
         files: Vec<String>,
         commands: Vec<CommandEntry>,
+        symbols: Vec<Symbol>,
+        tasks: Option<Vec<ProjectTask>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let placeholder = if root.is_some() {
-            "Search files by name  ·  > commands  ·  : go to line"
+        let placeholder = if tasks.is_some() {
+            "Run a task"
+        } else if root.is_some() {
+            "Go to file  ·  > commands  ·  @ symbols  ·  : line"
         } else {
-            "> run a command  ·  : go to line"
+            "> commands  ·  @ symbols  ·  : go to line"
         };
         let input = cx.new(|cx| {
             InputState::new(window, cx)
@@ -82,6 +91,8 @@ impl Palette {
             root,
             files,
             commands,
+            symbols,
+            tasks,
             items: Vec::new(),
             selected: 0,
             scroll: UniformListScrollHandle::new(),
@@ -99,7 +110,25 @@ impl Palette {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         let query = self.input.read(cx).value().to_string();
         self.selected = 0;
-        if let Some(rest) = query.strip_prefix(':') {
+        if let Some(tasks) = &self.tasks {
+            let q = query.trim();
+            let pattern = Pattern::parse(q, CaseMatching::Ignore, Normalization::Smart);
+            let labels: Vec<Labeled> = tasks.iter().enumerate().map(|(i, t)| Labeled(i, t.label.clone())).collect();
+            let mut matched = pattern.match_list(labels, &mut self.matcher);
+            if !q.is_empty() {
+                matched.sort_by(|a, b| b.1.cmp(&a.1));
+            }
+            self.items = matched.into_iter().map(|(l, _)| Item::Task { ix: l.0 }).collect();
+        } else if let Some(rest) = query.strip_prefix('@') {
+            let q = rest.trim();
+            let pattern = Pattern::parse(q, CaseMatching::Smart, Normalization::Smart);
+            let labels: Vec<Labeled> = self.symbols.iter().enumerate().map(|(i, s)| Labeled(i, s.name.clone())).collect();
+            let mut matched = pattern.match_list(labels, &mut self.matcher);
+            if !q.is_empty() {
+                matched.sort_by(|a, b| b.1.cmp(&a.1));
+            }
+            self.items = matched.into_iter().map(|(l, _)| Item::Symbol { ix: l.0 }).collect();
+        } else if let Some(rest) = query.strip_prefix(':') {
             let mut parts = rest.split(':').map(|s| s.trim().parse::<u32>().ok());
             let line = parts.next().flatten();
             let col = parts.next().flatten().unwrap_or(1);
@@ -165,6 +194,12 @@ impl Palette {
                 cx.emit(PaletteEvent::Run(action));
             }
             Item::Line { line, col } => cx.emit(PaletteEvent::GoToLine(line, col)),
+            Item::Symbol { ix } => cx.emit(PaletteEvent::GoToLine(self.symbols[ix].line, 1)),
+            Item::Task { ix } => {
+                if let Some(t) = self.tasks.as_ref().and_then(|t| t.get(ix)) {
+                    cx.emit(PaletteEvent::RunTask(t.command.clone()));
+                }
+            }
         }
     }
 
@@ -192,8 +227,13 @@ impl Render for Palette {
         let theme = cx.theme().clone();
         let view = cx.entity();
         let count = self.items.len();
-        let empty_hint = if self.input.read(cx).value().starts_with(':') {
+        let q = self.input.read(cx).value().to_string();
+        let empty_hint = if self.tasks.is_some() {
+            "No tasks found in this folder (package.json, Cargo.toml, Makefile, justfile, go.mod…)"
+        } else if q.starts_with(':') {
             "Type a line number, e.g. :42 or :42:8"
+        } else if q.starts_with('@') {
+            "No symbols in this file"
         } else {
             "No matches"
         };
@@ -290,6 +330,38 @@ impl Render for Palette {
                                     Item::Line { line, col } => row.child(format!(
                                         "Go to line {line}, column {col}"
                                     )),
+                                    Item::Symbol { ix: six } => {
+                                        let sym = &this.symbols[*six];
+                                        row.child(
+                                            div()
+                                                .w(px(64.))
+                                                .flex_shrink_0()
+                                                .text_xs()
+                                                .text_color(theme.muted_foreground)
+                                                .child(sym.kind),
+                                        )
+                                        .child(div().flex_1().truncate().child(sym.name.clone()))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(theme.muted_foreground)
+                                                .child(format!(":{}", sym.line)),
+                                        )
+                                    }
+                                    Item::Task { ix: tix } => {
+                                        let label = this
+                                            .tasks
+                                            .as_ref()
+                                            .and_then(|t| t.get(*tix))
+                                            .map(|t| t.label.clone())
+                                            .unwrap_or_default();
+                                        row.child(
+                                            gpui_kit::component::Icon::new(gpui_kit::assets::IconName::Play)
+                                                .size(px(12.))
+                                                .text_color(theme.muted_foreground),
+                                        )
+                                        .child(label)
+                                    }
                                 };
                                 let view = view.clone();
                                 row.on_click(move |_, _, cx| {

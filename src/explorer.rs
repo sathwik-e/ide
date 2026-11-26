@@ -31,7 +31,7 @@ struct Row {
 pub enum ExplorerEvent {
     Open(PathBuf),
     OpenTerminalAt(PathBuf),
-    FilesChanged,
+    FilesChanged(Vec<PathBuf>),
     Deleted(PathBuf),
     Renamed(PathBuf, PathBuf),
 }
@@ -103,7 +103,7 @@ impl Explorer {
         self._watcher = None;
         self._watch_task = None;
         if let Some(root) = root {
-            let (tx, rx) = smol::channel::unbounded::<()>();
+            let (tx, rx) = smol::channel::unbounded::<Vec<PathBuf>>();
             let watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 if let Ok(ev) = res {
                     let noisy = ev.paths.iter().all(|p| {
@@ -111,7 +111,7 @@ impl Explorer {
                             .any(|c| matches!(c.as_os_str().to_str(), Some(".git" | "target" | "node_modules")))
                     });
                     if !noisy && !ev.kind.is_access() {
-                        let _ = tx.try_send(());
+                        let _ = tx.try_send(ev.paths.clone());
                     }
                 }
             });
@@ -120,14 +120,19 @@ impl Explorer {
                 self._watcher = Some(w);
             }
             self._watch_task = Some(cx.spawn(async move |this, cx| {
-                while rx.recv().await.is_ok() {
+                while let Ok(first) = rx.recv().await {
                     // Coalesce bursts (git checkout, builds) into one refresh.
                     smol::Timer::after(Duration::from_millis(150)).await;
-                    while rx.try_recv().is_ok() {}
+                    let mut paths = first;
+                    while let Ok(more) = rx.try_recv() {
+                        paths.extend(more);
+                    }
+                    paths.sort();
+                    paths.dedup();
                     if this
                         .update(cx, |this, cx| {
                             this.rebuild();
-                            cx.emit(ExplorerEvent::FilesChanged);
+                            cx.emit(ExplorerEvent::FilesChanged(paths));
                             cx.notify();
                         })
                         .is_err()

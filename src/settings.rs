@@ -29,6 +29,8 @@ pub struct Settings {
     pub soft_wrap: bool,
     pub format_on_save: bool,
     pub auto_save: bool,
+    pub trim_trailing_whitespace: bool,
+    pub insert_final_newline: bool,
     pub rainbow_indent: bool,
     /// Port Live Server listens on (falls back to the next free port).
     pub live_server_port: u16,
@@ -76,6 +78,8 @@ impl Default for Settings {
             soft_wrap: false,
             format_on_save: false,
             auto_save: false,
+            trim_trailing_whitespace: true,
+            insert_final_newline: true,
             rainbow_indent: true,
             live_server_port: 5500,
             runner_clear_before_run: true,
@@ -210,6 +214,9 @@ impl AiSettings {
 pub struct Session {
     pub recent: Vec<PathBuf>,
     pub last_folder: Option<PathBuf>,
+    /// Open tabs per folder, restored when the folder is opened again.
+    pub tabs: std::collections::BTreeMap<String, Vec<PathBuf>>,
+    pub active_tab: std::collections::BTreeMap<String, PathBuf>,
 }
 
 impl Session {

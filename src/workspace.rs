@@ -10,25 +10,33 @@ use gpui_kit::component::{
     WindowExt as _,
     button::{Button, ButtonVariants as _},
     h_flex,
+    diff::{Diff, DiffFile, DiffState},
     input::{Editor, EditorState, InputEvent, Position, TabSize},
+    text::TextView,
     notification::Notification,
     resizable::{h_resizable, resizable_panel, v_resizable},
     v_flex,
 };
 use gpui_kit::{prelude::FluentBuilder as _, *};
+use std::{collections::{BTreeMap, HashMap}, rc::Rc, sync::Arc, time::SystemTime};
 use gpui_kit::base::Selectable as _;
 
 use crate::{
     ai::{AiPanel, EditorContext},
     browser::BrowserPanel,
+    editing,
     explorer::{Explorer, ExplorerEvent},
     formatter,
+    git::{GitEvent, GitPanel},
+    lsp,
     http_client::HttpPanel,
     icons,
     live_server::LiveServer,
     palette::{CommandEntry, Palette, PaletteEvent},
     runner,
     search::{SearchEvent, SearchPanel},
+    symbols,
+    tasks,
     settings::{Session, Settings},
     settings_view::SettingsView,
     terminal::{TerminalEvent, TerminalView},
@@ -67,13 +75,34 @@ actions!(
         SetupAi,
         CloseFolder,
         Quit,
+        ToggleComment,
+        MoveLineUp,
+        MoveLineDown,
+        DuplicateLineUp,
+        DuplicateLineDown,
+        DeleteLine,
+        SelectNextOccurrence,
+        ReopenClosedTab,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset,
+        ToggleMarkdownPreview,
+        RunTask,
+        GoToSymbol,
+        ShowShortcuts,
+        ToggleZenMode,
+        ShowSourceControl,
+        ShowProblems,
+        RestartLanguageServers,
     ]
 );
+
+const EDITOR_CTX: &str = "Input && mode == editor";
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-o", OpenFolder, None),
-        KeyBinding::new("cmd-shift-o", OpenFile, None),
+        KeyBinding::new("cmd-shift-o", GoToSymbol, None),
         KeyBinding::new("cmd-n", NewFile, None),
         KeyBinding::new("cmd-s", Save, None),
         KeyBinding::new("cmd-alt-s", SaveAll, None),
@@ -102,6 +131,29 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("alt-z", ToggleSoftWrap, None),
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-enter", crate::http_client::SendRequest, Some("HttpPanel")),
+        KeyBinding::new("cmd-shift-t", ReopenClosedTab, None),
+        KeyBinding::new("cmd-=", ZoomIn, None),
+        KeyBinding::new("cmd-+", ZoomIn, None),
+        KeyBinding::new("cmd--", ZoomOut, None),
+        KeyBinding::new("cmd-0", ZoomReset, None),
+        KeyBinding::new("cmd-shift-v", ToggleMarkdownPreview, None),
+        KeyBinding::new("cmd-alt-r", RunTask, None),
+        KeyBinding::new("cmd-k cmd-s", ShowShortcuts, None),
+        KeyBinding::new("cmd-k z", ToggleZenMode, None),
+        KeyBinding::new("ctrl-shift-g", ShowSourceControl, None),
+        KeyBinding::new("cmd-shift-m", ShowProblems, None),
+        // Editor commands, bound in the code editor's context so they win over
+        // the engine's defaults where they overlap.
+        KeyBinding::new("cmd-/", ToggleComment, Some(EDITOR_CTX)),
+        KeyBinding::new("alt-up", MoveLineUp, Some(EDITOR_CTX)),
+        KeyBinding::new("alt-down", MoveLineDown, Some(EDITOR_CTX)),
+        KeyBinding::new("shift-alt-up", DuplicateLineUp, Some(EDITOR_CTX)),
+        KeyBinding::new("shift-alt-down", DuplicateLineDown, Some(EDITOR_CTX)),
+        KeyBinding::new("cmd-shift-k", DeleteLine, Some(EDITOR_CTX)),
+        KeyBinding::new("cmd-d", SelectNextOccurrence, Some(EDITOR_CTX)),
+        KeyBinding::new("f12", gpui_kit::component::input::GoToDefinition, Some(EDITOR_CTX)),
+        KeyBinding::new("cmd-alt-f", gpui_kit::component::input::Replace, Some(EDITOR_CTX)),
+        KeyBinding::new("cmd-shift-f", FindInFiles, Some(EDITOR_CTX)),
     ]);
 }
 
@@ -129,6 +181,7 @@ pub fn set_menus(cx: &mut App) {
                 MenuItem::action("Save All", SaveAll),
                 MenuItem::separator(),
                 MenuItem::action("Close Tab", CloseTab),
+                MenuItem::action("Reopen Closed Tab", ReopenClosedTab),
                 MenuItem::action("Close Folder", CloseFolder),
             ],
             disabled: false,
@@ -149,6 +202,13 @@ pub fn set_menus(cx: &mut App) {
                 ),
                 MenuItem::separator(),
                 MenuItem::action("Format Document", FormatDocument),
+                MenuItem::separator(),
+                MenuItem::action("Toggle Comment", ToggleComment),
+                MenuItem::action("Move Line Up", MoveLineUp),
+                MenuItem::action("Move Line Down", MoveLineDown),
+                MenuItem::action("Duplicate Line", DuplicateLineDown),
+                MenuItem::action("Delete Line", DeleteLine),
+                MenuItem::action("Select Next Occurrence", SelectNextOccurrence),
             ],
             disabled: false,
         },
@@ -166,8 +226,18 @@ pub fn set_menus(cx: &mut App) {
                 MenuItem::action("HTTP Client", ToggleHttp),
                 MenuItem::action("AI Assistant", ToggleAi),
                 MenuItem::separator(),
+                MenuItem::action("Source Control", ShowSourceControl),
+                MenuItem::action("Problems", ShowProblems),
+                MenuItem::action("Markdown Preview", ToggleMarkdownPreview),
+                MenuItem::separator(),
+                MenuItem::action("Zoom In", ZoomIn),
+                MenuItem::action("Zoom Out", ZoomOut),
+                MenuItem::action("Reset Zoom", ZoomReset),
+                MenuItem::action("Zen Mode", ToggleZenMode),
+                MenuItem::separator(),
                 MenuItem::action("Toggle Word Wrap", ToggleSoftWrap),
                 MenuItem::action("Toggle Rainbow Indent", ToggleRainbowIndent),
+                MenuItem::action("Keyboard Shortcuts", ShowShortcuts),
             ],
             disabled: false,
         },
@@ -175,6 +245,7 @@ pub fn set_menus(cx: &mut App) {
             name: "Run".into(),
             items: vec![
                 MenuItem::action("Run File", RunFile),
+                MenuItem::action("Run Task…", RunTask),
                 MenuItem::action("Live Server", ToggleLiveServer),
                 MenuItem::action("New Terminal", NewTerminal),
             ],
@@ -186,6 +257,7 @@ pub fn set_menus(cx: &mut App) {
 enum BufferKind {
     Text(Entity<EditorState>),
     Settings(Entity<SettingsView>),
+    Diff(Entity<DiffState>, String),
     Image,
     Binary,
 }
@@ -197,6 +269,8 @@ struct Buffer {
     language: String,
     dirty: bool,
     tab: TabSize,
+    doc: Option<Rc<lsp::Document>>,
+    mtime: Option<SystemTime>,
     _subscription: Option<Subscription>,
 }
 
@@ -204,6 +278,9 @@ impl Buffer {
     fn title(&self) -> String {
         if matches!(self.kind, BufferKind::Settings(_)) {
             return "Settings".into();
+        }
+        if let BufferKind::Diff(_, title) = &self.kind {
+            return title.clone();
         }
         self.path
             .as_ref()
@@ -224,6 +301,19 @@ impl Buffer {
 enum SidebarMode {
     Files,
     Search,
+    Git,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum BottomTab {
+    Terminal,
+    Problems,
+}
+
+enum LspEntry {
+    Starting(Vec<u64>),
+    Ready(Arc<lsp::LspClient>),
+    Failed,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -231,6 +321,7 @@ enum Tool {
     Browser,
     Http,
     Ai,
+    Preview,
 }
 
 pub struct Workspace {
@@ -254,6 +345,15 @@ pub struct Workspace {
     files_index: Vec<String>,
     live: Option<LiveServer>,
     branch: Option<String>,
+    git: Entity<GitPanel>,
+    git_changes: usize,
+    bottom_tab: BottomTab,
+    lsp: HashMap<&'static str, LspEntry>,
+    lsp_tx: smol::channel::Sender<lsp::ServerEvent>,
+    diagnostics: BTreeMap<PathBuf, Vec<lsp_types::Diagnostic>>,
+    closed: Vec<PathBuf>,
+    zen: Option<(bool, bool, Option<Tool>)>,
+    sync_pending: bool,
     session: Session,
     _index_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -336,9 +436,11 @@ impl Workspace {
                 ExplorerEvent::OpenTerminalAt(dir) => {
                     this.new_terminal(Some(dir.clone()), window, cx);
                 }
-                ExplorerEvent::FilesChanged => {
+                ExplorerEvent::FilesChanged(paths) => {
                     this.branch = this.root(cx).as_deref().and_then(read_branch);
                     this.reindex(cx);
+                    this.reload_changed(paths.clone(), window, cx);
+                    this.git.update(cx, |g, cx| g.refresh(cx));
                 }
                 ExplorerEvent::Deleted(path) => {
                     let gone: Vec<usize> = this
@@ -375,9 +477,32 @@ impl Workspace {
             }),
         ];
         subs.push(cx.observe_global_in::<Settings>(window, |this, window, cx| this.apply_settings(window, cx)));
+        let git = cx.new(|cx| GitPanel::new(window, cx));
+        subs.push(cx.subscribe_in(&git, window, |this, _, event, window, cx| match event {
+            GitEvent::OpenDiff { path, staged, untracked } => {
+                this.open_diff(path.clone(), *staged, *untracked, window, cx)
+            }
+            GitEvent::Changed(n) => {
+                this.git_changes = *n;
+                cx.notify();
+            }
+        }));
+
+        // Diagnostics from every language server arrive on one channel.
+        let (lsp_tx, lsp_rx) = smol::channel::unbounded::<lsp::ServerEvent>();
+        cx.spawn_in(window, async move |this, cx| {
+            while let Ok(event) = lsp_rx.recv().await {
+                let lsp::ServerEvent::Diagnostics { uri, diagnostics } = event;
+                let ok = this.update_in(cx, |this, _, cx| this.set_diagnostics(&uri, diagnostics, cx));
+                if ok.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
 
         let session = Session::load();
-        let mut this = Self {
+        let this = Self {
             focus_handle: cx.focus_handle(),
             explorer,
             search,
@@ -398,23 +523,37 @@ impl Workspace {
             files_index: Vec::new(),
             live: None,
             branch: None,
+            git,
+            git_changes: 0,
+            bottom_tab: BottomTab::Terminal,
+            lsp: HashMap::new(),
+            lsp_tx,
+            diagnostics: BTreeMap::new(),
+            closed: Vec::new(),
+            zen: None,
+            sync_pending: false,
             session,
             _index_task: None,
             _subscriptions: subs,
         };
 
-        let arg = std::env::args().nth(1).map(PathBuf::from);
-        match arg {
-            Some(p) if p.is_dir() => this.set_root(Some(p), window, cx),
-            Some(p) if p.is_file() => this.open_path(p, window, cx),
-            _ => {
-                if let Some(last) = this.session.last_folder.clone().filter(|p| p.is_dir()) {
-                    this.set_root(Some(last), window, cx);
+        // Open the project after the first frame, so the window appears even
+        // while macOS asks for folder access.
+        cx.defer_in(window, |this, window, cx| {
+            let arg = std::env::args().nth(1).map(PathBuf::from);
+            match arg {
+                Some(p) if p.is_dir() => this.set_root(Some(p), window, cx),
+                Some(p) if p.is_file() => this.open_path(p, window, cx),
+                _ => {
+                    if let Some(last) = this.session.last_folder.clone().filter(|p| p.is_dir()) {
+                        this.set_root(Some(last), window, cx);
+                        this.restore_tabs(window, cx);
+                    }
                 }
             }
-        }
-        // A terminal is always docked and ready, without taking focus.
-        this.spawn_terminal(None, false, window, cx);
+            // A terminal is always docked and ready, without taking focus.
+            this.spawn_terminal(None, false, window, cx);
+        });
         this
     }
 
@@ -442,6 +581,17 @@ impl Workspace {
             term.update(cx, |t, _| t.run(&cd, true));
         }
         self.branch = root.as_deref().and_then(read_branch);
+        self.git.update(cx, |g, cx| g.set_root(root.clone(), cx));
+        // Language servers are per project.
+        self.lsp.clear();
+        self.diagnostics.clear();
+        for b in self.buffers.iter_mut() {
+            b.doc = None;
+        }
+        let ids: Vec<u64> = self.buffers.iter().map(|b| b.id).collect();
+        for id in ids {
+            self.attach_lsp(id, window, cx);
+        }
         self.reindex(cx);
         cx.notify();
     }
@@ -516,8 +666,340 @@ impl Workspace {
                 if Settings::get(cx).auto_save {
                     this.schedule_auto_save(id, window, cx);
                 }
+                this.schedule_lsp_sync(window, cx);
+                if this.tool == Some(Tool::Preview) {
+                    cx.notify();
+                }
             }
         })
+    }
+
+    /// Push edited documents to their language servers, debounced.
+    fn schedule_lsp_sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.sync_pending {
+            return;
+        }
+        self.sync_pending = true;
+        cx.spawn_in(window, async move |this, cx| {
+            smol::Timer::after(std::time::Duration::from_millis(250)).await;
+            let _ = this.update(cx, |this, cx| {
+                this.sync_pending = false;
+                for b in &this.buffers {
+                    if let (Some(doc), Some(editor)) = (&b.doc, b.editor()) {
+                        doc.sync(&editor.read(cx).value());
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Start (or reuse) the language server for a buffer and wire it up.
+    fn attach_lsp(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(root) = self.root(cx) else { return };
+        let Some(b) = self.buffers.iter().find(|b| b.id == id) else { return };
+        let (Some(path), Some(_)) = (b.path.clone(), b.editor()) else { return };
+        if b.doc.is_some() || !path.starts_with(&root) {
+            return;
+        }
+        let language = b.language.clone();
+        let Some((spec, bin)) = lsp::resolve(&language) else { return };
+        match self.lsp.get_mut(spec.name) {
+            Some(LspEntry::Ready(client)) => {
+                let client = client.clone();
+                self.open_document(id, client, window, cx);
+            }
+            Some(LspEntry::Starting(waiting)) => waiting.push(id),
+            Some(LspEntry::Failed) => {}
+            None => {
+                self.lsp.insert(spec.name, LspEntry::Starting(vec![id]));
+                let tx = self.lsp_tx.clone();
+                let name = spec.name;
+                let task = cx.background_spawn(async move { lsp::LspClient::start(spec, &bin, &root, tx) });
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = task.await;
+                    let _ = this.update_in(cx, |this, window, cx| {
+                        let waiting = match this.lsp.remove(name) {
+                            Some(LspEntry::Starting(w)) => w,
+                            _ => Vec::new(),
+                        };
+                        match result {
+                            Ok(client) => {
+                                this.lsp.insert(name, LspEntry::Ready(client.clone()));
+                                for id in waiting {
+                                    this.open_document(id, client.clone(), window, cx);
+                                }
+                            }
+                            Err(err) => {
+                                log::warn!("language server {name} failed: {err}");
+                                this.lsp.insert(name, LspEntry::Failed);
+                            }
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
+        }
+        cx.notify();
+    }
+
+    fn open_document(&mut self, id: u64, client: Arc<lsp::LspClient>, window: &mut Window, cx: &mut Context<Self>) {
+        let ws = cx.weak_entity();
+        let Some(b) = self.buffers.iter_mut().find(|b| b.id == id) else { return };
+        let (Some(path), Some(editor)) = (b.path.clone(), b.editor().cloned()) else { return };
+        let text = editor.read(cx).value().to_string();
+        let doc = lsp::Document::open(client, &path, &lsp::language_id(&b.language, &path), &text);
+        b.doc = Some(doc.clone());
+        let provider = Rc::new(lsp::Provider(doc));
+        editor.update(cx, |e, cx| {
+            let l = e.lsp_mut();
+            l.completion_provider = Some(provider.clone());
+            l.hover_provider = Some(provider.clone());
+            l.definition_provider = Some(provider);
+            // Definitions in other files open in a tab.
+            l.show_document = Some(Rc::new(move |params, window, cx| {
+                let Some(target) = lsp::uri_to_path(params.uri.as_str()) else { return false };
+                let Some(ws) = ws.upgrade() else { return false };
+                let line = params.selection.map(|r| r.start.line + 1).unwrap_or(1);
+                let col = params.selection.map(|r| r.start.character + 1).unwrap_or(1);
+                ws.update(cx, |this, cx| {
+                    this.open_path(target, window, cx);
+                    this.go_to(line, col, window, cx);
+                });
+                true
+            }));
+            cx.notify();
+        });
+        let _ = window;
+        if let Some(diags) = self.diagnostics.get(&path).cloned() {
+            self.apply_diagnostics(&path, &diags, cx);
+        }
+    }
+
+    fn set_diagnostics(&mut self, uri: &str, diagnostics: Vec<lsp_types::Diagnostic>, cx: &mut Context<Self>) {
+        let Some(path) = lsp::uri_to_path(uri) else { return };
+        let path = path.canonicalize().unwrap_or(path);
+        self.apply_diagnostics(&path, &diagnostics, cx);
+        if diagnostics.is_empty() {
+            self.diagnostics.remove(&path);
+        } else {
+            self.diagnostics.insert(path, diagnostics);
+        }
+        cx.notify();
+    }
+
+    fn apply_diagnostics(&mut self, path: &Path, diagnostics: &[lsp_types::Diagnostic], cx: &mut Context<Self>) {
+        use gpui_kit::component::highlighter::Diagnostic;
+        let Some(editor) = self
+            .buffers
+            .iter()
+            .find(|b| b.path.as_deref() == Some(path))
+            .and_then(|b| b.editor().cloned())
+        else {
+            return;
+        };
+        let items: Vec<Diagnostic> = diagnostics
+            .iter()
+            .map(|d| {
+                let mut diag = Diagnostic::new(d.range.start..d.range.end, d.message.clone());
+                if let Some(sev) = d.severity {
+                    diag = diag.with_severity(sev);
+                }
+                diag
+            })
+            .collect();
+        editor.update(cx, |e, cx| {
+            if let Some(set) = e.diagnostics_mut() {
+                set.clear();
+                set.extend(items);
+            }
+            cx.notify();
+        });
+    }
+
+    fn diagnostic_counts(&self) -> (usize, usize) {
+        let mut errors = 0;
+        let mut warnings = 0;
+        for d in self.diagnostics.values().flatten() {
+            match d.severity {
+                Some(lsp_types::DiagnosticSeverity::ERROR) => errors += 1,
+                Some(lsp_types::DiagnosticSeverity::WARNING) => warnings += 1,
+                _ => {}
+            }
+        }
+        (errors, warnings)
+    }
+
+    /// Reload open, unmodified files that changed on disk.
+    fn reload_changed(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        for path in paths {
+            let path = path.canonicalize().unwrap_or(path);
+            let Some(b) = self.buffers.iter_mut().find(|b| b.path.as_ref() == Some(&path)) else { continue };
+            if b.dirty {
+                continue;
+            }
+            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+            if mtime.is_none() || mtime == b.mtime {
+                continue;
+            }
+            b.mtime = mtime;
+            let Some(editor) = b.editor().cloned() else { continue };
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            if editor.read(cx).value().as_ref() == text {
+                continue;
+            }
+            let pos = editor.read(cx).cursor_position();
+            editor.update(cx, |e, cx| {
+                e.set_value(text, window, cx);
+                e.set_cursor_position(pos, window, cx);
+            });
+            if let Some(b) = self.buffers.iter_mut().find(|b| b.path.as_ref() == Some(&path)) {
+                b.dirty = false;
+            }
+        }
+    }
+
+    fn save_tabs(&mut self, cx: &App) {
+        let Some(root) = self.root(cx) else { return };
+        let key = root.to_string_lossy().to_string();
+        let tabs: Vec<PathBuf> = self
+            .buffers
+            .iter()
+            .filter(|b| matches!(b.kind, BufferKind::Text(_) | BufferKind::Image))
+            .filter_map(|b| b.path.clone())
+            .filter(|p| p.starts_with(&root))
+            .collect();
+        self.session.tabs.insert(key.clone(), tabs);
+        match self.active_path() {
+            Some(p) => {
+                self.session.active_tab.insert(key, p);
+            }
+            None => {
+                self.session.active_tab.remove(&key);
+            }
+        }
+        self.session.save();
+    }
+
+    fn restore_tabs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(root) = self.root(cx) else { return };
+        let key = root.to_string_lossy().to_string();
+        let tabs = self.session.tabs.get(&key).cloned().unwrap_or_default();
+        let active = self.session.active_tab.get(&key).cloned();
+        for p in tabs.into_iter().filter(|p| p.is_file()) {
+            self.open_path(p, window, cx);
+        }
+        if let Some(active) = active {
+            if let Some(ix) = self.buffers.iter().position(|b| b.path.as_ref() == Some(&active)) {
+                self.activate(ix, window, cx);
+            }
+        }
+    }
+
+    fn open_diff(&mut self, rel: String, staged: bool, untracked: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(root) = self.root(cx) else { return };
+        let title = format!(
+            "{} ({})",
+            Path::new(&rel).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(rel.clone()),
+            if staged { "staged" } else { "changes" }
+        );
+        if let Some(ix) = self.buffers.iter().position(|b| matches!(&b.kind, BufferKind::Diff(_, t) if *t == title)) {
+            self.remove_buffer(ix, window, cx);
+        }
+        let patch = match crate::git::diff(&root, &rel, staged, untracked) {
+            Ok(p) => p,
+            Err(err) => {
+                window.push_notification(Notification::error(err).title("git diff"), cx);
+                return;
+            }
+        };
+        let language = icons::language_for(Path::new(&rel));
+        let files: Vec<DiffFile> = DiffFile::parse(&patch)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|f| f.with_language(language.clone()))
+            .collect();
+        if files.is_empty() {
+            self.open_path(root.join(&rel), window, cx);
+            return;
+        }
+        let state = cx.new(|cx| DiffState::new(files, cx));
+        let id = self.next_id;
+        self.next_id += 1;
+        self.push_buffer(
+            Buffer {
+                id,
+                path: Some(root.join(&rel)),
+                kind: BufferKind::Diff(state, title),
+                language,
+                dirty: false,
+                tab: TabSize::default(),
+                doc: None,
+                mtime: None,
+                _subscription: None,
+            },
+            window,
+            cx,
+        );
+    }
+
+    /// Run an editing command against the active code editor.
+    fn edit_active(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut EditorState, &str, &mut Window, &mut Context<EditorState>),
+    ) {
+        let Some(ix) = self.active else { return };
+        let language = self.buffers[ix].language.clone();
+        if let Some(editor) = self.buffers[ix].editor().cloned() {
+            editor.update(cx, |e, cx| f(e, &language, window, cx));
+        }
+    }
+
+    fn show_shortcuts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        const GROUPS: &[(&str, &[(&str, &str)])] = &[
+            ("Files", &[("⌘P", "Go to file"), ("⇧⌘O", "Go to symbol"), ("⌃G", "Go to line"), ("⌘N", "New file"), ("⌘O", "Open folder"), ("⌘S", "Save"), ("⌘W", "Close tab"), ("⇧⌘T", "Reopen closed tab")]),
+            ("Editing", &[("⌘/", "Toggle comment"), ("⌥↑ ⌥↓", "Move line"), ("⇧⌥↑ ⇧⌥↓", "Duplicate line"), ("⇧⌘K", "Delete line"), ("⌘D", "Select next occurrence"), ("⌥⌘↑ ⌥⌘↓", "Add cursor"), ("⌘F / ⌥⌘F", "Find / Replace"), ("⇧⌥F", "Format document"), ("F12", "Go to definition")]),
+            ("Workspace", &[("⇧⌘P", "Commands"), ("⇧⌘F", "Find in files"), ("⌃⇧G", "Source control"), ("⇧⌘M", "Problems"), ("⌘B", "Sidebar"), ("⌘J", "Terminal"), ("⌘K Z", "Zen mode"), ("⌘= ⌘- ⌘0", "Zoom")]),
+            ("Run & Tools", &[("⌘R", "Run file"), ("⌥⌘R", "Run task"), ("⌥L", "Live Server"), ("⇧⌘B", "Browser"), ("⌥⌘H", "HTTP client"), ("⇧⌘V", "Markdown preview"), ("⌘I", "AI assistant"), ("⌘,", "Settings")]),
+        ];
+        window.open_dialog(cx, |dialog, _, cx| {
+            let theme = cx.theme().clone();
+            dialog.title("Keyboard Shortcuts").w(px(720.)).child(
+                div().grid().grid_cols(2).gap_x_8().gap_y_4().children(GROUPS.iter().map(|(title, rows)| {
+                    v_flex()
+                        .gap_1()
+                        .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.muted_foreground).child(*title))
+                        .children(rows.iter().map(|(keys, label)| {
+                            h_flex()
+                                .justify_between()
+                                .text_sm()
+                                .child(div().child(*label))
+                                .child(div().text_color(theme.muted_foreground).child(*keys))
+                        }))
+                })),
+            )
+        });
+    }
+
+    fn toggle_zen(&mut self, cx: &mut Context<Self>) {
+        match self.zen.take() {
+            Some((sidebar, terminal, tool)) => {
+                self.sidebar_visible = sidebar;
+                self.terminal_visible = terminal;
+                self.tool = tool;
+            }
+            None => {
+                self.zen = Some((self.sidebar_visible, self.terminal_visible, self.tool));
+                self.sidebar_visible = false;
+                self.terminal_visible = false;
+                self.tool = None;
+            }
+        }
+        self.sync_browser(cx);
+        cx.notify();
     }
 
     fn schedule_auto_save(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
@@ -558,6 +1040,8 @@ impl Workspace {
                 language,
                 dirty: false,
                 tab: TabSize::default(),
+                doc: None,
+                mtime: None,
                 _subscription: None,
             }
         } else {
@@ -580,6 +1064,8 @@ impl Workspace {
                     language,
                     dirty: false,
                     tab: TabSize::default(),
+                    doc: None,
+                    mtime: None,
                     _subscription: None,
                 }
             } else {
@@ -589,16 +1075,20 @@ impl Workspace {
                 let sub = self.subscribe_editor(id, &editor, window, cx);
                 Buffer {
                     id,
+                    mtime: std::fs::metadata(&path).and_then(|m| m.modified()).ok(),
                     path: Some(path),
                     kind: BufferKind::Text(editor),
                     language,
                     dirty: false,
                     tab,
+                    doc: None,
                     _subscription: Some(sub),
                 }
             }
         };
         self.push_buffer(buffer, window, cx);
+        self.attach_lsp(id, window, cx);
+        self.save_tabs(cx);
     }
 
     fn new_file(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -614,6 +1104,8 @@ impl Workspace {
                 language: "text".into(),
                 dirty: false,
                 tab: detect_indent("", Settings::get(cx).tab_size),
+                doc: None,
+                mtime: None,
                 _subscription: Some(sub),
             },
             window,
@@ -633,6 +1125,7 @@ impl Workspace {
                 editor.update(cx, |e, cx| e.focus(window, cx));
             });
         }
+        self.save_tabs(cx);
         cx.notify();
     }
 
@@ -640,7 +1133,14 @@ impl Workspace {
         if ix >= self.buffers.len() {
             return;
         }
-        self.buffers.remove(ix);
+        let removed = self.buffers.remove(ix);
+        if let Some(doc) = &removed.doc {
+            doc.close();
+        }
+        if let (Some(p), BufferKind::Text(_)) = (&removed.path, &removed.kind) {
+            self.closed.retain(|c| c != p);
+            self.closed.push(p.clone());
+        }
         if self.buffers.is_empty() {
             self.active = None;
             self.explorer.update(cx, |e, cx| e.set_active_file(None, cx));
@@ -654,6 +1154,7 @@ impl Workspace {
             };
             self.activate(next, window, cx);
         }
+        self.save_tabs(cx);
         cx.notify();
     }
 
@@ -728,6 +1229,17 @@ impl Workspace {
             return false;
         };
 
+        let (trim, final_nl) = {
+            let s = Settings::get(cx);
+            (s.trim_trailing_whitespace, s.insert_final_newline)
+        };
+        if trim || final_nl {
+            let current = editor.read(cx).value().to_string();
+            let edits = editing::tidy_edits(&current, trim, final_nl);
+            if !edits.is_empty() {
+                editor.update(cx, |e, cx| e.replace_text_in_ranges(&edits, window, cx));
+            }
+        }
         let text = editor.read(cx).value().to_string();
         let format_on_save = Settings::get(cx).format_on_save;
         if (format || format_on_save) && formatter::can_format(&path) {
@@ -770,7 +1282,13 @@ impl Workspace {
             Ok(()) => {
                 if let Some(b) = self.buffers.iter_mut().find(|b| b.id == id) {
                     b.dirty = false;
+                    b.mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+                    if let Some(doc) = &b.doc {
+                        doc.sync(text);
+                        doc.saved();
+                    }
                 }
+                self.git.update(cx, |g, cx| g.refresh(cx));
                 if path == Settings::path() {
                     let settings = Settings::load();
                     crate::apply_theme(&settings, cx);
@@ -805,6 +1323,8 @@ impl Workspace {
                 language: "settings".into(),
                 dirty: false,
                 tab: TabSize::default(),
+                doc: None,
+                mtime: None,
                 _subscription: None,
             },
             window,
@@ -1002,6 +1522,7 @@ impl Workspace {
                         self.browser = Some(cx.new(|cx| BrowserPanel::new(window, cx)));
                     }
                 }
+                Tool::Preview => {}
                 Tool::Http => {
                     if self.http.is_none() {
                         self.http = Some(cx.new(|cx| HttpPanel::new(window, cx)));
@@ -1106,6 +1627,21 @@ impl Workspace {
             ("Toggle Word Wrap", Some("alt-z"), Box::new(ToggleSoftWrap)),
             ("Toggle Rainbow Indent", None, Box::new(ToggleRainbowIndent)),
             ("Theme: Toggle Light / Dark", None, Box::new(ToggleTheme)),
+            ("Run Task…", Some("cmd-alt-r"), Box::new(RunTask)),
+            ("Go to Symbol in File", Some("cmd-shift-o"), Box::new(GoToSymbol)),
+            ("Source Control", Some("ctrl-shift-g"), Box::new(ShowSourceControl)),
+            ("Problems", Some("cmd-shift-m"), Box::new(ShowProblems)),
+            ("Markdown: Open Preview", Some("cmd-shift-v"), Box::new(ToggleMarkdownPreview)),
+            ("Reopen Closed Tab", Some("cmd-shift-t"), Box::new(ReopenClosedTab)),
+            ("Toggle Comment", Some("cmd-/"), Box::new(ToggleComment)),
+            ("Duplicate Line", Some("shift-alt-down"), Box::new(DuplicateLineDown)),
+            ("Delete Line", Some("cmd-shift-k"), Box::new(DeleteLine)),
+            ("Zen Mode", None, Box::new(ToggleZenMode)),
+            ("Zoom In", Some("cmd-="), Box::new(ZoomIn)),
+            ("Zoom Out", Some("cmd--"), Box::new(ZoomOut)),
+            ("Reset Zoom", Some("cmd-0"), Box::new(ZoomReset)),
+            ("Keyboard Shortcuts", None, Box::new(ShowShortcuts)),
+            ("Restart Language Servers", None, Box::new(RestartLanguageServers)),
             ("Settings", Some("cmd-,"), Box::new(OpenSettings)),
             ("Settings: Edit settings.json", None, Box::new(OpenSettingsJson)),
         ];
@@ -1126,8 +1662,14 @@ impl Workspace {
         let root = self.root(cx);
         let files = self.files_index.clone();
         let commands = self.commands(cx);
-        let initial = initial.to_string();
-        let palette = cx.new(|cx| Palette::new(&initial, root, files, commands, window, cx));
+        let symbols = self
+            .active
+            .and_then(|ix| self.buffers.get(ix))
+            .and_then(|b| b.editor().map(|e| symbols::extract(&e.read(cx).value(), &b.language)))
+            .unwrap_or_default();
+        let task_list = (initial == "!task").then(|| root.as_deref().map(tasks::detect).unwrap_or_default());
+        let initial = if task_list.is_some() { String::new() } else { initial.to_string() };
+        let palette = cx.new(|cx| Palette::new(&initial, root, files, commands, symbols, task_list, window, cx));
         let sub = cx.subscribe_in(&palette, window, |this, _, event, window, cx| {
             match event {
                 PaletteEvent::OpenFile(path) => {
@@ -1144,6 +1686,13 @@ impl Workspace {
                     let (line, col) = (*line, *col);
                     this.close_palette(window, cx);
                     this.go_to(line, col, window, cx);
+                }
+                PaletteEvent::RunTask(command) => {
+                    let command = command.clone();
+                    this.close_palette(window, cx);
+                    let t = this.new_terminal(None, window, cx);
+                    t.update(cx, |t, _| t.run(&command, false));
+                    this.bottom_tab = BottomTab::Terminal;
                 }
                 PaletteEvent::Dismiss => this.close_palette(window, cx),
             }
@@ -1352,7 +1901,9 @@ impl Workspace {
                 .and_then(|r| r.file_name().map(|n| n.to_string_lossy().to_string()))
                 .unwrap_or_else(|| "Explorer".into()),
             SidebarMode::Search => "Search".into(),
+            SidebarMode::Git => self.branch.clone().unwrap_or_else(|| "Source Control".into()),
         };
+        let git_changes = self.git_changes;
         let has_root = self.root(cx).is_some();
         let icon_btn = |id: &'static str, icon: Lucide, tip: &'static str| {
             Button::new(id).ghost().xsmall().icon(icon).tooltip(tip)
@@ -1398,22 +1949,57 @@ impl Workspace {
                         )
                     })
                     .when(has_root, |d| {
+                        let mode_btn = |id: &'static str, icon: Lucide, m: SidebarMode, tip: &'static str| {
+                            Button::new(id).ghost().xsmall().icon(icon).selected(mode == m).tooltip(tip)
+                        };
                         d.child(
-                            Button::new("sb-search")
-                                .ghost()
-                                .xsmall()
-                                .icon(if mode == SidebarMode::Search { Lucide::Files } else { Lucide::Search })
-                                .tooltip(if mode == SidebarMode::Search { "Explorer  ⇧⌘E" } else { "Search  ⇧⌘F" })
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    if this.sidebar_mode == SidebarMode::Search {
+                            h_flex()
+                                .gap(px(1.))
+                                .child(mode_btn("sb-mode-files", Lucide::Files, SidebarMode::Files, "Explorer  ⇧⌘E").on_click(
+                                    cx.listener(|this, _, _, cx| {
                                         this.sidebar_mode = SidebarMode::Files;
-                                    } else {
+                                        cx.notify();
+                                    }),
+                                ))
+                                .child(mode_btn("sb-mode-search", Lucide::Search, SidebarMode::Search, "Search  ⇧⌘F").on_click(
+                                    cx.listener(|this, _, window, cx| {
                                         this.sidebar_mode = SidebarMode::Search;
                                         let q = this.search.read(cx).input();
                                         q.update(cx, |s, cx| s.focus(window, cx));
-                                    }
-                                    cx.notify();
-                                })),
+                                        cx.notify();
+                                    }),
+                                ))
+                                .child(
+                                    div()
+                                        .relative()
+                                        .child(mode_btn("sb-mode-git", Lucide::GitBranch, SidebarMode::Git, "Source Control  ⌃⇧G").on_click(
+                                            cx.listener(|this, _, _, cx| {
+                                                this.sidebar_mode = SidebarMode::Git;
+                                                this.git.update(cx, |g, cx| g.refresh(cx));
+                                                cx.notify();
+                                            }),
+                                        ))
+                                        .when(git_changes > 0, |d| {
+                                            d.child(
+                                                div()
+                                                    .absolute()
+                                                    .top(px(-2.))
+                                                    .right(px(-3.))
+                                                    .min_w(px(14.))
+                                                    .h(px(14.))
+                                                    .px(px(3.))
+                                                    .rounded_full()
+                                                    .bg(theme.primary)
+                                                    .text_color(theme.primary_foreground)
+                                                    .text_size(px(9.))
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .child(if git_changes > 99 { "99+".to_string() } else { git_changes.to_string() }),
+                                            )
+                                        }),
+                                ),
                         )
                     }),
             )
@@ -1422,7 +2008,8 @@ impl Workspace {
                     .flex_1()
                     .min_h_0()
                     .when(mode == SidebarMode::Files, |d| d.child(self.explorer.clone()))
-                    .when(mode == SidebarMode::Search, |d| d.child(self.search.clone())),
+                    .when(mode == SidebarMode::Search, |d| d.child(self.search.clone()))
+                    .when(mode == SidebarMode::Git, |d| d.child(self.git.clone())),
             )
     }
 
@@ -1597,6 +2184,12 @@ impl Workspace {
                 .text_size(px(font_size))
                 .into_any_element(),
             BufferKind::Settings(view) => view.clone().into_any_element(),
+            BufferKind::Diff(state, _) => Diff::new(state)
+                .line_number(true)
+                .syntax_highlight(true)
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(font_size - 0.5))
+                .into_any_element(),
             BufferKind::Image => {
                 let path = buffer.path.clone().unwrap_or_default();
                 v_flex()
@@ -1627,6 +2220,23 @@ impl Workspace {
         let theme = cx.theme().clone();
         let dark = theme.is_dark();
         let active_fill = if dark { white().opacity(0.075) } else { black().opacity(0.055) };
+        let tab = self.bottom_tab;
+        let (errors, warnings) = self.diagnostic_counts();
+        let panel_tab = |id: &'static str, label: &'static str, t: BottomTab| {
+            let active = tab == t;
+            h_flex()
+                .id(id)
+                .h(px(24.))
+                .px_2()
+                .gap_1p5()
+                .rounded(px(6.))
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .when(active, |d| d.text_color(theme.foreground))
+                .when(!active, |d| d.text_color(theme.muted_foreground).hover(|d| d.text_color(theme.foreground)))
+                .child(label)
+        };
         v_flex()
             .size_full()
             .border_t_1()
@@ -1636,7 +2246,29 @@ impl Workspace {
                     .h(px(32.))
                     .px_1p5()
                     .gap_1()
-                    .children(self.terminals.iter().enumerate().map(|(ix, t)| {
+                    .child(panel_tab("ptab-term", "Terminal", BottomTab::Terminal).on_click(cx.listener(|this, _, _, cx| {
+                        this.bottom_tab = BottomTab::Terminal;
+                        cx.notify();
+                    })))
+                    .child(
+                        panel_tab("ptab-problems", "Problems", BottomTab::Problems)
+                            .when(errors + warnings > 0, |d| {
+                                d.child(
+                                    div()
+                                        .px_1p5()
+                                        .rounded_full()
+                                        .bg(if errors > 0 { theme.danger.opacity(0.18) } else { theme.warning.opacity(0.18) })
+                                        .text_color(if errors > 0 { theme.danger } else { theme.warning })
+                                        .child((errors + warnings).to_string()),
+                                )
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.bottom_tab = BottomTab::Problems;
+                                cx.notify();
+                            })),
+                    )
+                    .child(div().w(px(1.)).h(px(14.)).mx_1().bg(theme.border))
+                    .when(tab == BottomTab::Terminal, |d| d.children(self.terminals.iter().enumerate().map(|(ix, t)| {
                         let active = ix == self.active_terminal;
                         let title = t.read(cx).title.clone();
                         let group = SharedString::from(format!("term-tab-{ix}"));
@@ -1674,8 +2306,8 @@ impl Workspace {
                                 f.focus(window, cx);
                                 cx.notify();
                             }))
-                    }))
-                    .child(
+                    }).collect::<Vec<_>>()))
+                    .when(tab == BottomTab::Terminal, |d| d.child(
                         Button::new("term-new")
                             .ghost()
                             .xsmall()
@@ -1684,7 +2316,7 @@ impl Workspace {
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.new_terminal(None, window, cx);
                             })),
-                    )
+                    ))
                     .child(div().flex_1())
                     .child(
                         Button::new("term-hide")
@@ -1702,8 +2334,142 @@ impl Workspace {
                 div()
                     .flex_1()
                     .min_h_0()
-                    .children(self.terminals.get(self.active_terminal).cloned()),
+                    .when(tab == BottomTab::Terminal, |d| d.children(self.terminals.get(self.active_terminal).cloned()))
+                    .when(tab == BottomTab::Problems, |d| d.child(self.render_problems(cx))),
             )
+    }
+
+    fn render_preview(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let source = self
+            .active
+            .and_then(|ix| self.buffers.get(ix))
+            .filter(|b| b.language == "markdown")
+            .and_then(|b| b.editor().map(|e| (b.title(), e.read(cx).value().to_string())));
+        v_flex()
+            .size_full()
+            .child(
+                h_flex()
+                    .h(px(40.))
+                    .px_3()
+                    .gap_2()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .text_sm()
+                    .child(gpui_kit::component::Icon::new(Lucide::BookOpen).size(px(14.)).text_color(theme.muted_foreground))
+                    .child(div().font_weight(FontWeight::MEDIUM).child(
+                        source.as_ref().map(|(t, _)| format!("Preview — {t}")).unwrap_or_else(|| "Markdown Preview".into()),
+                    )),
+            )
+            .child(match source {
+                Some((_, text)) => div()
+                    .id("md-preview-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_6()
+                    .py_5()
+                    .child(TextView::markdown("md-preview", text).selectable(true))
+                    .into_any_element(),
+                None => div()
+                    .p_4()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child("Open a Markdown file to see its live preview.")
+                    .into_any_element(),
+            })
+    }
+
+    fn render_problems(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme().clone();
+        let root = self.root(cx);
+        if self.diagnostics.is_empty() {
+            let servers: Vec<&str> = self
+                .lsp
+                .iter()
+                .filter(|(_, e)| matches!(e, LspEntry::Ready(_)))
+                .map(|(n, _)| *n)
+                .collect();
+            return div()
+                .p_3()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(if servers.is_empty() {
+                    "No problems. Install a language server (rust-analyzer, pyright, typescript-language-server, gopls, clangd…) to see errors and warnings here.".to_string()
+                } else {
+                    format!("No problems detected ({})", servers.join(", "))
+                })
+                .into_any_element();
+        }
+        div()
+            .id("problems")
+            .size_full()
+            .overflow_y_scroll()
+            .py_1()
+            .children(self.diagnostics.iter().map(|(path, diags)| {
+                let rel = root
+                    .as_ref()
+                    .and_then(|r| path.strip_prefix(r).ok())
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.to_string_lossy().to_string());
+                v_flex()
+                    .child(
+                        h_flex()
+                            .h(px(24.))
+                            .px_3()
+                            .gap_1p5()
+                            .text_sm()
+                            .child(img(icons::file_icon(path)).size(px(14.)))
+                            .child(rel)
+                            .child(
+                                div()
+                                    .px_1p5()
+                                    .rounded_full()
+                                    .bg(theme.secondary)
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(diags.len().to_string()),
+                            ),
+                    )
+                    .children(diags.iter().enumerate().map(|(i, d)| {
+                        let (icon, color) = match d.severity {
+                            Some(lsp_types::DiagnosticSeverity::ERROR) => (IconName::CircleX, theme.danger),
+                            Some(lsp_types::DiagnosticSeverity::WARNING) => (IconName::TriangleAlert, theme.warning),
+                            _ => (IconName::Info, theme.info),
+                        };
+                        let path = path.clone();
+                        let line = d.range.start.line + 1;
+                        let col = d.range.start.character + 1;
+                        let msg = d.message.lines().next().unwrap_or("").to_string();
+                        h_flex()
+                            .id(SharedString::from(format!("diag-{}-{i}", path.display())))
+                            .h(px(24.))
+                            .pl(px(30.))
+                            .pr_3()
+                            .gap_2()
+                            .text_sm()
+                            .cursor_pointer()
+                            .hover(|d| d.bg(theme.list_hover))
+                            .child(gpui_kit::component::Icon::new(icon).size(px(13.)).text_color(color))
+                            .child(div().flex_1().truncate().child(msg))
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(format!(
+                                        "{}{}:{}",
+                                        d.source.as_ref().map(|s| format!("{s}  ")).unwrap_or_default(),
+                                        line,
+                                        col
+                                    )),
+                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_path(path.clone(), window, cx);
+                                this.go_to(line, col, window, cx);
+                            }))
+                    }))
+            }))
+            .into_any_element()
     }
 
     fn render_tool_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1713,6 +2479,7 @@ impl Workspace {
             Some(Tool::Browser) => self.browser.clone().map(|b| b.into_any_element()),
             Some(Tool::Http) => self.http.clone().map(|b| b.into_any_element()),
             Some(Tool::Ai) => self.ai.clone().map(|b| b.into_any_element()),
+            Some(Tool::Preview) => Some(self.render_preview(cx).into_any_element()),
             None => None,
         };
         div()
@@ -1768,6 +2535,27 @@ impl Workspace {
                         .into_any_element(),
                 );
                 right.push(item("sb-lang").child(icons::language_label(&b.language)).into_any_element());
+                if let Some((spec, _)) = lsp::resolve(&b.language).filter(|_| b.path.is_some()) {
+                    let state = match self.lsp.get(spec.name) {
+                        Some(LspEntry::Ready(_)) if b.doc.is_some() => Some((spec.name.to_string(), theme.muted_foreground)),
+                        Some(LspEntry::Starting(_)) => Some((format!("{} starting…", spec.name), theme.muted_foreground)),
+                        Some(LspEntry::Failed) => Some((format!("{} failed", spec.name), theme.danger)),
+                        _ => None,
+                    };
+                    if let Some((label, color)) = state {
+                        right.push(
+                            item("sb-lsp")
+                                .text_color(color)
+                                .child(gpui_kit::component::Icon::new(Lucide::Braces).size(px(11.)))
+                                .child(label)
+                                .tooltip(|window, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new("Language server · click to restart").build(window, cx)
+                                })
+                                .on_click(|_, window, cx| window.dispatch_action(Box::new(RestartLanguageServers), cx))
+                                .into_any_element(),
+                        );
+                    }
+                }
             }
             if let Some(name) = b.path.as_ref().and_then(|p| formatter::formatter_name(p)) {
                 right.push(
@@ -1802,17 +2590,30 @@ impl Workspace {
                 h_flex()
                     .gap_0p5()
                     .when_some(self.branch.clone(), |d, branch| {
+                        let changes = self.git_changes;
                         d.child(
                             item("sb-branch")
                                 .child(gpui_kit::component::Icon::new(Lucide::GitBranch).size(px(12.)))
                                 .child(branch)
+                                .when(changes > 0, |d| d.child(format!("· {changes}")))
                                 .tooltip(|window, cx| {
-                                    gpui_kit::component::tooltip::Tooltip::new("git status").build(window, cx)
+                                    gpui_kit::component::tooltip::Tooltip::new("Source Control  ⌃⇧G").build(window, cx)
                                 })
-                                .on_click(cx.listener(|this, _, window, cx| {
-                                    let t = this.new_terminal(None, window, cx);
-                                    t.update(cx, |t, _| t.run("git status", false));
-                                })),
+                                .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowSourceControl), cx)),
+                        )
+                    })
+                    .map(|d| {
+                        let (errors, warnings) = self.diagnostic_counts();
+                        d.child(
+                            item("sb-problems")
+                                .child(gpui_kit::component::Icon::new(IconName::CircleX).size(px(12.)))
+                                .child(errors.to_string())
+                                .child(gpui_kit::component::Icon::new(IconName::TriangleAlert).size(px(12.)))
+                                .child(warnings.to_string())
+                                .tooltip(|window, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new("Problems  ⇧⌘M").build(window, cx)
+                                })
+                                .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowProblems), cx)),
                         )
                     })
                     .when_some(self.live.as_ref(), |d, live| {
@@ -2049,6 +2850,86 @@ impl Render for Workspace {
                 Settings::update(cx, |s| s.rainbow_indent = !s.rainbow_indent);
             }))
             .on_action(cx.listener(|_, _: &Quit, _, cx| cx.quit()))
+            .on_action(cx.listener(|this, _: &ToggleComment, window, cx| {
+                this.edit_active(window, cx, |e, lang, window, cx| editing::toggle_comment(e, lang, window, cx))
+            }))
+            .on_action(cx.listener(|this, _: &MoveLineUp, window, cx| {
+                this.edit_active(window, cx, |e, _, window, cx| editing::move_lines(e, true, window, cx))
+            }))
+            .on_action(cx.listener(|this, _: &MoveLineDown, window, cx| {
+                this.edit_active(window, cx, |e, _, window, cx| editing::move_lines(e, false, window, cx))
+            }))
+            .on_action(cx.listener(|this, _: &DuplicateLineUp, window, cx| {
+                this.edit_active(window, cx, |e, _, window, cx| editing::duplicate_lines(e, false, window, cx))
+            }))
+            .on_action(cx.listener(|this, _: &DuplicateLineDown, window, cx| {
+                this.edit_active(window, cx, |e, _, window, cx| editing::duplicate_lines(e, true, window, cx))
+            }))
+            .on_action(cx.listener(|this, _: &DeleteLine, window, cx| {
+                this.edit_active(window, cx, |e, _, window, cx| editing::delete_lines(e, window, cx))
+            }))
+            .on_action(cx.listener(|this, _: &SelectNextOccurrence, window, cx| {
+                this.edit_active(window, cx, |e, _, _, cx| editing::select_next_occurrence(e, cx))
+            }))
+            .on_action(cx.listener(|this, _: &ReopenClosedTab, window, cx| {
+                if let Some(p) = this.closed.pop() {
+                    this.open_path(p, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|_, _: &ZoomIn, _, cx| {
+                Settings::update(cx, |s| {
+                    s.font_size = (s.font_size + 1.).min(32.);
+                    s.terminal_font_size = (s.terminal_font_size + 1.).min(28.);
+                })
+            }))
+            .on_action(cx.listener(|_, _: &ZoomOut, _, cx| {
+                Settings::update(cx, |s| {
+                    s.font_size = (s.font_size - 1.).max(9.);
+                    s.terminal_font_size = (s.terminal_font_size - 1.).max(9.);
+                })
+            }))
+            .on_action(cx.listener(|_, _: &ZoomReset, _, cx| {
+                Settings::update(cx, |s| {
+                    s.font_size = 13.;
+                    s.terminal_font_size = 13.;
+                })
+            }))
+            .on_action(cx.listener(|this, _: &ToggleMarkdownPreview, window, cx| this.show_tool(Tool::Preview, window, cx)))
+            .on_action(cx.listener(|this, _: &RunTask, window, cx| this.open_palette("!task", window, cx)))
+            .on_action(cx.listener(|this, _: &GoToSymbol, window, cx| this.open_palette("@", window, cx)))
+            .on_action(cx.listener(|this, _: &ShowShortcuts, window, cx| this.show_shortcuts(window, cx)))
+            .on_action(cx.listener(|this, _: &ToggleZenMode, _, cx| this.toggle_zen(cx)))
+            .on_action(cx.listener(|this, _: &ShowSourceControl, _, cx| {
+                this.sidebar_visible = true;
+                this.sidebar_mode = SidebarMode::Git;
+                this.git.update(cx, |g, cx| g.refresh(cx));
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &ShowProblems, window, cx| {
+                if this.terminals.is_empty() {
+                    this.spawn_terminal(None, false, window, cx);
+                }
+                this.terminal_visible = true;
+                this.bottom_tab = BottomTab::Problems;
+                cx.notify();
+            }))
+            .on_action(cx.listener(|this, _: &RestartLanguageServers, window, cx| {
+                this.lsp.clear();
+                this.diagnostics.clear();
+                for b in this.buffers.iter_mut() {
+                    b.doc = None;
+                }
+                let ids: Vec<u64> = this.buffers.iter().map(|b| b.id).collect();
+                for id in ids {
+                    this.attach_lsp(id, window, cx);
+                }
+                window.push_notification("Language servers restarted", cx);
+            }))
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, window, cx| {
+                for p in paths.paths() {
+                    this.open_path(p.clone(), window, cx);
+                }
+            }))
             .child(self.render_title_bar(cx))
             .child(div().flex_1().min_h_0().child(body))
             .children(palette)
