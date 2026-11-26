@@ -63,7 +63,6 @@ pub struct TerminalView {
 
 impl EventEmitter<TerminalEvent> for TerminalView {}
 
-const FONT: &str = "JetBrains Mono";
 
 impl TerminalView {
     pub fn new(cwd: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -77,7 +76,7 @@ impl TerminalView {
         let mut env = HashMap::new();
         env.insert("TERM".to_string(), "xterm-256color".to_string());
         env.insert("COLORTERM".to_string(), "truecolor".to_string());
-        env.insert("TERM_PROGRAM".to_string(), "ide".to_string());
+        env.insert("TERM_PROGRAM".to_string(), "eclipse".to_string());
         let options = tty::Options {
             shell: Some(tty::Shell::new(shell.clone(), vec!["-l".into()])),
             working_directory: cwd.filter(|p| p.is_dir()).or_else(dirs::home_dir),
@@ -484,9 +483,11 @@ impl Render for TerminalView {
         let theme = cx.theme();
         let fg = theme.foreground;
         let bg = theme.background;
-        let font_size = px(13.);
-        let line_height = px(18.);
-        let base_font = font(FONT);
+        let term_size = crate::settings::Settings::get(cx).terminal_font_size.clamp(8., 32.);
+        let font_size = px(term_size);
+        let line_height = px((term_size * 1.4).round());
+        let family = theme.mono_font_family.clone();
+        let base_font = font(family.clone());
         let font_id = window.text_system().resolve_font(&base_font);
         let cell_width = window
             .text_system()
@@ -619,7 +620,7 @@ impl Render for TerminalView {
                     .relative()
                     .size_full()
                     .overflow_hidden()
-                    .font_family(FONT)
+                    .font_family(family)
                     .text_size(font_size)
                     .line_height(line_height)
                     .text_color(fg)

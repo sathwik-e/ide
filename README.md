@@ -1,6 +1,8 @@
-<p align="center"><img src="assets/icon.png" width="128" alt="IDE icon"></p>
+<p align="center"><img src="assets/icon.png" width="140" alt="Eclipse IDE icon"></p>
 
-<h1 align="center">IDE</h1>
+<h1 align="center">Eclipse IDE</h1>
+
+<p align="center"><em>everything from the cosmos</em></p>
 
 <p align="center">A fast, quiet, native code editor written in Rust. No built-in AI, no clutter, and every tool you reach for is already inside it.</p>
 
@@ -24,7 +26,8 @@ Built on [GPUI](https://github.com/zed-industries/zed) (Zed's GPU-accelerated UI
 | **Optional AI** | Off by default. Turn it on from the palette (*AI: Set Up Assistant*) with your own key for **Claude**, **ChatGPT** or **Gemini**. Answers stream in a side panel, and the open file can be included as context. |
 | **Command palette / quick open** | `⌘P` for files (fuzzy), `>` for commands, `:` to go to a line. `⇧⌘P` opens directly into commands. |
 | **Find in files** | `⇧⌘F`. Respects `.gitignore`. |
-| **Themes** | *Midnight* (dark) and *Daylight* (light). JetBrains Mono is bundled. |
+| **Themes & customization** | Six cosmos themes (Eclipse, Nebula, Aurora, Midnight, Supernova, Lunar), six accent colors, editor font (JetBrains Mono bundled, SF Mono, Menlo, Monaco), editor and terminal font size, word wrap, rainbow guides, line numbers, tab size, format and auto save, all in a Settings tab (`⌘,`) that applies changes instantly. |
+| **Word wrap** | One click on **Wrap** in the status bar, `⌥Z`, or the Settings switch. |
 
 ## Keyboard
 
@@ -37,12 +40,16 @@ Built on [GPUI](https://github.com/zed-industries/zed) (Zed's GPU-accelerated UI
 
 ## Settings
 
-`⌘,` opens `~/Library/Application Support/ide/settings.json` in the editor. Saving it applies the changes. The file is created with permissions `600`, since it can hold API keys.
+`⌘,` opens the Settings tab. Everything else lives in `~/Library/Application Support/eclipse/settings.json` (*Edit settings.json* in Settings). Saving that file applies it too. The file is created with permissions `600`, since it can hold API keys.
 
 ```jsonc
 {
-  "theme": "Midnight",            // or "Daylight"
+  "theme": "Eclipse",              // Nebula, Aurora, Midnight, Supernova, Lunar
+  "accent": "",                    // "" = theme accent, or a hex like "#4fd8b8"
+  "editor_font": "JetBrains Mono",
   "font_size": 13.0,
+  "terminal_font_size": 13.0,
+  "line_numbers": true,
   "tab_size": 4,                   // default; each file's own indentation is detected
   "soft_wrap": false,
   "format_on_save": false,
@@ -71,7 +78,7 @@ cargo run --release -- /path/to/project
 ```
 
 ```bash
-./script/bundle-macos.sh        # builds target/release/bundle/IDE.app
+./script/bundle-macos.sh        # builds target/release/bundle/Eclipse.app
 ```
 
 ```bash
@@ -95,7 +102,11 @@ src/
   http_client.rs   HTTP client panel
   ai.rs            optional Claude / ChatGPT / Gemini chat
   icons.rs         file icons and language detection
+script/
+  gen_themes.py    generates assets/themes/eclipse.json from compact palettes
+  bundle-macos.sh  builds Eclipse.app
   settings.rs      settings and session persistence
+  settings_view.rs Settings tab
 vendor/
   gpui-base        GPUI Kit base, patched: rainbow indent guides
   gpui-component   GPUI Kit components, patched: tree-sitter and syntect highlighting combined

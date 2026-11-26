@@ -10,9 +10,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// "Midnight" (dark) or "Daylight" (light).
+    /// Eclipse, Nebula, Aurora, Midnight, Supernova (dark) or Lunar (light).
     pub theme: String,
+    /// Accent color as hex ("#f2b36d"); empty uses the theme's own accent.
+    pub accent: String,
+    /// Editor and terminal font family.
+    pub editor_font: String,
     pub font_size: f32,
+    pub terminal_font_size: f32,
+    pub line_numbers: bool,
     pub tab_size: usize,
     pub soft_wrap: bool,
     pub format_on_save: bool,
@@ -51,8 +57,12 @@ pub struct ProviderSettings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            theme: "Midnight".into(),
+            theme: "Eclipse".into(),
+            accent: String::new(),
+            editor_font: "JetBrains Mono".into(),
             font_size: 13.0,
+            terminal_font_size: 13.0,
+            line_numbers: true,
             tab_size: 4,
             soft_wrap: false,
             format_on_save: false,
@@ -92,9 +102,14 @@ impl Global for Settings {}
 
 impl Settings {
     pub fn dir() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("ide")
+        let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+        let dir = base.join("eclipse");
+        // One-time migration from the app's earlier name.
+        let old = base.join("ide");
+        if !dir.exists() && old.is_dir() {
+            let _ = std::fs::rename(&old, &dir);
+        }
+        dir
     }
 
     pub fn path() -> PathBuf {
@@ -104,10 +119,16 @@ impl Settings {
     pub fn load() -> Self {
         let path = Self::path();
         match std::fs::read_to_string(&path) {
-            Ok(text) => serde_json::from_str(&text).unwrap_or_else(|err| {
-                log::warn!("settings.json is invalid, using defaults: {err}");
-                Self::default()
-            }),
+            Ok(text) => {
+                let mut s: Settings = serde_json::from_str(&text).unwrap_or_else(|err| {
+                    log::warn!("settings.json is invalid, using defaults: {err}");
+                    Self::default()
+                });
+                if s.theme == "Daylight" {
+                    s.theme = "Lunar".into();
+                }
+                s
+            }
             Err(_) => {
                 let settings = Self::default();
                 settings.save();
@@ -134,6 +155,16 @@ impl Settings {
 
     pub fn get(cx: &App) -> &Settings {
         cx.global::<Settings>()
+    }
+
+    /// Change settings: applies the theme, stores the global (which notifies
+    /// every observer) and writes the file.
+    pub fn update(cx: &mut App, f: impl FnOnce(&mut Settings)) {
+        let mut settings = Self::get(cx).clone();
+        f(&mut settings);
+        settings.save();
+        crate::apply_theme(&settings, cx);
+        cx.set_global(settings);
     }
 
     pub fn ai_ready(&self) -> bool {

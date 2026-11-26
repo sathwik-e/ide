@@ -1,13 +1,13 @@
 [package]
-name = "ide"
-version = "0.1.0"
+name = "eclipse-ide"
+version = "0.2.0"
 edition = "2024"
-description = "A fast, minimal, native code editor written in Rust."
+description = "Eclipse IDE: everything from the cosmos. A fast, native code editor written in Rust."
 license = "Apache-2.0"
 publish = false
 
 [[bin]]
-name = "ide"
+name = "eclipse"
 path = "src/main.rs"
 
 [dependencies]

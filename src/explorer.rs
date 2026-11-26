@@ -406,7 +406,7 @@ impl Render for Explorer {
             .child(
                 h_flex()
                     .group("explorer-header")
-                    .h(px(32.))
+                    .h(px(30.))
                     .pl_3()
                     .pr_1()
                     .justify_between()
@@ -558,42 +558,60 @@ impl Render for Explorer {
                                     let view2 = view.clone();
                                     let path = row.path.clone();
                                     Some(
-                                        h_flex()
+                                        div()
                                             .id(SharedString::from(row.path.to_string_lossy().to_string()))
-                                            .h(px(24.))
-                                            .mx_1()
-                                            .pl(px(8. + row.depth as f32 * 14.))
-                                            .pr_2()
-                                            .gap_1p5()
-                                            .rounded(theme.radius)
-                                            .text_sm()
+                                            .w_full()
+                                            .h(px(26.))
+                                            .px_1p5()
                                             .cursor_pointer()
-                                            .when(active, |d| {
-                                                d.bg(theme.list_active).text_color(theme.foreground)
-                                            })
-                                            .when(!active && selected, |d| d.bg(theme.list_hover))
-                                            .when(!active, |d| {
-                                                d.text_color(theme.sidebar_foreground)
-                                                    .hover(|d| d.bg(theme.list_hover))
-                                            })
                                             .child(
-                                                div()
-                                                    .w(px(12.))
-                                                    .flex_shrink_0()
-                                                    .when(row.is_dir, |d| {
-                                                        d.child(
-                                                            gpui_kit::component::Icon::new(if expanded {
-                                                                IconName::ChevronDown
-                                                            } else {
-                                                                IconName::ChevronRight
-                                                            })
-                                                            .size(px(12.))
-                                                            .text_color(theme.muted_foreground),
-                                                        )
-                                                    }),
+                                                h_flex()
+                                                    .relative()
+                                                    .w_full()
+                                                    .h_full()
+                                                    .pl(px(6. + row.depth as f32 * 14.))
+                                                    .pr_2()
+                                                    .gap_1p5()
+                                                    .rounded(theme.radius)
+                                                    .text_sm()
+                                                    .when(active, |d| {
+                                                        d.bg(theme.list_active)
+                                                            .text_color(theme.foreground)
+                                                            .child(
+                                                                div()
+                                                                    .absolute()
+                                                                    .left_0()
+                                                                    .top(px(5.))
+                                                                    .bottom(px(5.))
+                                                                    .w(px(2.))
+                                                                    .rounded_full()
+                                                                    .bg(theme.primary),
+                                                            )
+                                                    })
+                                                    .when(!active && selected, |d| d.bg(theme.list_hover))
+                                                    .when(!active, |d| {
+                                                        d.text_color(theme.sidebar_foreground)
+                                                            .hover(|d| d.bg(theme.list_hover))
+                                                    })
+                                                    .child(
+                                                        div()
+                                                            .w(px(12.))
+                                                            .flex_shrink_0()
+                                                            .when(row.is_dir, |d| {
+                                                                d.child(
+                                                                    gpui_kit::component::Icon::new(if expanded {
+                                                                        IconName::ChevronDown
+                                                                    } else {
+                                                                        IconName::ChevronRight
+                                                                    })
+                                                                    .size(px(12.))
+                                                                    .text_color(theme.muted_foreground),
+                                                                )
+                                                            }),
+                                                    )
+                                                    .child(img(icon).size(px(16.)).flex_shrink_0())
+                                                    .child(div().flex_1().min_w_0().truncate().child(row.name.clone())),
                                             )
-                                            .child(img(icon).size(px(16.)).flex_shrink_0())
-                                            .child(div().truncate().child(row.name.clone()))
                                             .on_mouse_down(MouseButton::Right, move |_, _, cx| {
                                                 let path = path.clone();
                                                 view2.update(cx, |this, _| {

@@ -1630,6 +1630,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
+name = "eclipse-ide"
+version = "0.2.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "dirs 6.0.0",
+ "env_logger",
+ "gpui-kit",
+ "gpui-webview",
+ "http",
+ "ignore",
+ "lb-wry",
+ "log",
+ "notify",
+ "nucleo-matcher",
+ "open",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "smol",
+ "tiny_http",
+ "trash",
+ "ureq",
+]
+
+[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4034,32 +4060,6 @@ name = "icu_segmenter_data"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "913a7d294ad056474749152107309fdee3ec17d2482d1ab70fdc61a81c64b9a3"
-
-[[package]]
-name = "ide"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "dirs 6.0.0",
- "env_logger",
- "gpui-kit",
- "gpui-webview",
- "http",
- "ignore",
- "lb-wry",
- "log",
- "notify",
- "nucleo-matcher",
- "open",
- "rust-embed",
- "serde",
- "serde_json",
- "smol",
- "tiny_http",
- "trash",
- "ureq",
-]
 
 [[package]]
 name = "idna"

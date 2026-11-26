@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Build IDE.app (release) into target/release/bundle/.
+# Build Eclipse.app (release) into target/release/bundle/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 cargo build --release
 
-APP="target/release/bundle/IDE.app"
-rm -rf "$APP"
+APP="target/release/bundle/Eclipse.app"
+rm -rf "$APP" target/release/bundle/IDE.app
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/release/ide "$APP/Contents/MacOS/ide"
+cp target/release/eclipse "$APP/Contents/MacOS/eclipse"
 [ -f assets/AppIcon.icns ] && cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
@@ -17,10 +17,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>IDE</string>
-  <key>CFBundleDisplayName</key><string>IDE</string>
-  <key>CFBundleIdentifier</key><string>dev.ide.app</string>
-  <key>CFBundleExecutable</key><string>ide</string>
+  <key>CFBundleName</key><string>Eclipse</string>
+  <key>CFBundleDisplayName</key><string>Eclipse</string>
+  <key>CFBundleIdentifier</key><string>dev.eclipse-ide.app</string>
+  <key>CFBundleExecutable</key><string>eclipse</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>

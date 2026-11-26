@@ -30,6 +30,7 @@ use crate::{
     runner,
     search::{SearchEvent, SearchPanel},
     settings::{Session, Settings},
+    settings_view::SettingsView,
     terminal::{TerminalEvent, TerminalView},
 };
 
@@ -57,6 +58,7 @@ actions!(
         FormatDocument,
         ToggleLiveServer,
         OpenSettings,
+        OpenSettingsJson,
         NextTab,
         PrevTab,
         ToggleTheme,
@@ -106,12 +108,13 @@ pub fn bind_keys(cx: &mut App) {
 pub fn set_menus(cx: &mut App) {
     cx.set_menus(vec![
         Menu {
-            name: "IDE".into(),
+            name: "Eclipse".into(),
             items: vec![
                 MenuItem::action("Settings…", OpenSettings),
                 MenuItem::action("Toggle Light/Dark", ToggleTheme),
+                MenuItem::action("Edit settings.json", OpenSettingsJson),
                 MenuItem::separator(),
-                MenuItem::action("Quit IDE", Quit),
+                MenuItem::action("Quit Eclipse", Quit),
             ],
             disabled: false,
         },
@@ -182,6 +185,7 @@ pub fn set_menus(cx: &mut App) {
 
 enum BufferKind {
     Text(Entity<EditorState>),
+    Settings(Entity<SettingsView>),
     Image,
     Binary,
 }
@@ -198,6 +202,9 @@ struct Buffer {
 
 impl Buffer {
     fn title(&self) -> String {
+        if matches!(self.kind, BufferKind::Settings(_)) {
+            return "Settings".into();
+        }
         self.path
             .as_ref()
             .and_then(|p| p.file_name())
@@ -246,6 +253,7 @@ pub struct Workspace {
     palette: Option<Entity<Palette>>,
     files_index: Vec<String>,
     live: Option<LiveServer>,
+    branch: Option<String>,
     session: Session,
     _index_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -307,6 +315,15 @@ fn walk_files(root: &Path) -> Vec<String> {
     out
 }
 
+fn read_branch(root: &Path) -> Option<String> {
+    let head = std::fs::read_to_string(root.join(".git/HEAD")).ok()?;
+    let head = head.trim();
+    Some(match head.strip_prefix("ref: refs/heads/") {
+        Some(branch) => branch.to_string(),
+        None => head.chars().take(7).collect(),
+    })
+}
+
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg", "tiff", "avif"];
 
 impl Workspace {
@@ -319,7 +336,10 @@ impl Workspace {
                 ExplorerEvent::OpenTerminalAt(dir) => {
                     this.new_terminal(Some(dir.clone()), window, cx);
                 }
-                ExplorerEvent::FilesChanged => this.reindex(cx),
+                ExplorerEvent::FilesChanged => {
+                    this.branch = this.root(cx).as_deref().and_then(read_branch);
+                    this.reindex(cx);
+                }
                 ExplorerEvent::Deleted(path) => {
                     let gone: Vec<usize> = this
                         .buffers
@@ -377,6 +397,7 @@ impl Workspace {
             palette: None,
             files_index: Vec::new(),
             live: None,
+            branch: None,
             session,
             _index_task: None,
             _subscriptions: subs,
@@ -411,9 +432,10 @@ impl Workspace {
         } else {
             self.session.last_folder = None;
             self.session.save();
-            window.set_window_title("IDE");
+            window.set_window_title(crate::APP_NAME);
         }
         self.files_index.clear();
+        self.branch = root.as_deref().and_then(read_branch);
         self.reindex(cx);
         cx.notify();
     }
@@ -433,6 +455,8 @@ impl Workspace {
             if let Some(editor) = b.editor() {
                 editor.update(cx, |e, cx| {
                     e.set_indent_guides(settings.rainbow_indent, window, cx);
+                    e.set_soft_wrap(settings.soft_wrap, window, cx);
+                    e.set_line_number(settings.line_numbers, window, cx);
                 });
             }
         }
@@ -457,7 +481,7 @@ impl Workspace {
         cx.new(|cx| {
             EditorState::new(window, cx)
                 .language(language)
-                .line_number(true)
+                .line_number(settings.line_numbers)
                 .indent_guides(settings.rainbow_indent)
                 .tab_size(tab)
                 .soft_wrap(settings.soft_wrap)
@@ -743,7 +767,7 @@ impl Workspace {
                 }
                 if path == Settings::path() {
                     let settings = Settings::load();
-                    crate::apply_theme(&settings.theme, cx);
+                    crate::apply_theme(&settings, cx);
                     cx.set_global(settings);
                 }
                 cx.notify();
@@ -753,6 +777,33 @@ impl Workspace {
                 cx,
             ),
         }
+    }
+
+    fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(ix) = self
+            .buffers
+            .iter()
+            .position(|b| matches!(b.kind, BufferKind::Settings(_)))
+        {
+            self.activate(ix, window, cx);
+            return;
+        }
+        let id = self.next_id;
+        self.next_id += 1;
+        let view = cx.new(SettingsView::new);
+        self.push_buffer(
+            Buffer {
+                id,
+                path: None,
+                kind: BufferKind::Settings(view),
+                language: "settings".into(),
+                dirty: false,
+                tab: TabSize::default(),
+                _subscription: None,
+            },
+            window,
+            cx,
+        );
     }
 
     fn active_editor(&self) -> Option<Entity<EditorState>> {
@@ -1038,6 +1089,7 @@ impl Workspace {
             ("Toggle Rainbow Indent", None, Box::new(ToggleRainbowIndent)),
             ("Theme: Toggle Light / Dark", None, Box::new(ToggleTheme)),
             ("Settings", Some("cmd-,"), Box::new(OpenSettings)),
+            ("Settings: Edit settings.json", None, Box::new(OpenSettingsJson)),
         ];
         if ai_enabled {
             c.push(("AI Assistant", Some("cmd-i"), Box::new(ToggleAi)));
@@ -1160,102 +1212,146 @@ impl Workspace {
                 .selected(active)
                 .tooltip(tip)
         };
+        let group = || {
+            h_flex()
+                .gap_0p5()
+                .p_0p5()
+                .rounded(theme.radius_lg)
+                .bg(theme.secondary.opacity(0.6))
+                .border_1()
+                .border_color(theme.border.opacity(0.7))
+        };
 
         TitleBar::new()
             .child(
-                h_flex()
-                    .gap_1()
-                    .child(
-                        toggle("tb-sidebar", Lucide::PanelLeft, self.sidebar_visible, "Sidebar (⌘B)")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.sidebar_visible = !this.sidebar_visible;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        h_flex()
-                            .id("tb-crumb")
-                            .gap_1()
-                            .px_2()
-                            .h(px(24.))
-                            .rounded(theme.radius)
-                            .text_xs()
-                            .cursor_pointer()
-                            .hover(|d| d.bg(theme.secondary_hover))
-                            .when_some(root_name.clone(), |d, name| {
-                                d.child(
-                                    div()
-                                        .font_weight(FontWeight::SEMIBOLD)
-                                        .text_color(theme.foreground)
-                                        .child(name),
-                                )
-                            })
-                            .when(root_name.is_none(), |d| {
-                                d.text_color(theme.muted_foreground).child("Open Folder…")
-                            })
-                            .when_some(crumb, |d, crumb| {
-                                d.child(div().text_color(theme.muted_foreground).child("/"))
-                                    .child(div().text_color(theme.muted_foreground).child(crumb))
-                            })
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                if this.root(cx).is_some() {
-                                    this.open_palette("", window, cx)
-                                } else {
-                                    this.open_folder_dialog(window, cx)
-                                }
-                            })),
-                    ),
+                toggle("tb-sidebar", Lucide::PanelLeft, self.sidebar_visible, "Sidebar (⌘B)")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.sidebar_visible = !this.sidebar_visible;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                h_flex().flex_1().justify_center().child(
+                    h_flex()
+                        .id("tb-crumb")
+                        .gap_1p5()
+                        .px_3()
+                        .h(px(24.))
+                        .max_w(px(560.))
+                        .rounded(theme.radius_lg)
+                        .text_xs()
+                        .cursor_pointer()
+                        .border_1()
+                        .border_color(theme.border.opacity(0.7))
+                        .bg(theme.secondary.opacity(0.45))
+                        .hover(|d| d.bg(theme.secondary_hover))
+                        .child(
+                            gpui_kit::component::Icon::new(IconName::Search)
+                                .size(px(12.))
+                                .text_color(theme.muted_foreground),
+                        )
+                        .when_some(root_name.clone(), |d, name| {
+                            d.child(
+                                div()
+                                    .flex_shrink_0()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(theme.foreground)
+                                    .child(name),
+                            )
+                        })
+                        .when(root_name.is_none(), |d| {
+                            d.text_color(theme.muted_foreground).child("Eclipse — open a folder to begin")
+                        })
+                        .when_some(crumb, |d, crumb| {
+                            d.child(div().text_color(theme.muted_foreground.opacity(0.6)).child("/"))
+                                .child(div().truncate().text_color(theme.muted_foreground).child(crumb))
+                        })
+                        .tooltip(|window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new("Go to file (⌘P)").build(window, cx)
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            if this.root(cx).is_some() {
+                                this.open_palette("", window, cx)
+                            } else {
+                                this.open_folder_dialog(window, cx)
+                            }
+                        })),
+                ),
             )
             .child(
                 h_flex()
-                    .gap_0p5()
+                    .gap_2()
                     .pr_2()
-                    .when(runnable, |d| {
-                        d.child(
-                            Button::new("tb-run")
-                                .ghost()
-                                .small()
-                                .icon(Lucide::Play)
-                                .tooltip("Run File (⌘R)")
-                                .on_click(cx.listener(|this, _, window, cx| this.run_file(window, cx))),
-                        )
-                    })
                     .child(
-                        toggle("tb-live", Lucide::RadioTower, self.live.is_some(), "Live Server (⌥L)")
-                            .on_click(cx.listener(|this, _, window, cx| this.toggle_live(window, cx))),
-                    )
-                    .child(div().w(px(1.)).h(px(14.)).mx_1().bg(theme.border))
-                    .child(
-                        toggle("tb-term", Lucide::SquareTerminal, self.terminal_visible, "Terminal (⌘J)")
-                            .on_click(cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx))),
-                    )
-                    .child(
-                        toggle("tb-browser", Lucide::Globe, self.tool == Some(Tool::Browser), "Browser (⇧⌘B)")
-                            .on_click(cx.listener(|this, _, window, cx| this.show_tool(Tool::Browser, window, cx))),
+                        group()
+                            .when(runnable, |d| {
+                                d.child(
+                                    Button::new("tb-run")
+                                        .ghost()
+                                        .small()
+                                        .icon(Lucide::Play)
+                                        .text_color(theme.success)
+                                        .tooltip("Run File (⌘R)")
+                                        .on_click(cx.listener(|this, _, window, cx| this.run_file(window, cx))),
+                                )
+                            })
+                            .child(
+                                toggle("tb-live", Lucide::RadioTower, self.live.is_some(), "Live Server (⌥L)")
+                                    .on_click(cx.listener(|this, _, window, cx| this.toggle_live(window, cx))),
+                            ),
                     )
                     .child(
-                        toggle("tb-http", Lucide::Send, self.tool == Some(Tool::Http), "HTTP Client (⌥⌘H)")
-                            .on_click(cx.listener(|this, _, window, cx| this.show_tool(Tool::Http, window, cx))),
-                    )
-                    .when(ai_on, |d| {
-                        d.child(
-                            toggle("tb-ai", Lucide::Sparkles, self.tool == Some(Tool::Ai), "AI Assistant (⌘I)")
-                                .on_click(cx.listener(|this, _, window, cx| this.show_tool(Tool::Ai, window, cx))),
-                        )
-                    }),
+                        group()
+                            .child(
+                                toggle("tb-term", Lucide::SquareTerminal, self.terminal_visible, "Terminal (⌘J)")
+                                    .on_click(cx.listener(|this, _, window, cx| this.toggle_terminal(window, cx))),
+                            )
+                            .child(
+                                toggle("tb-browser", Lucide::Globe, self.tool == Some(Tool::Browser), "Browser (⇧⌘B)")
+                                    .on_click(cx.listener(|this, _, window, cx| this.show_tool(Tool::Browser, window, cx))),
+                            )
+                            .child(
+                                toggle("tb-http", Lucide::Send, self.tool == Some(Tool::Http), "HTTP Client (⌥⌘H)")
+                                    .on_click(cx.listener(|this, _, window, cx| this.show_tool(Tool::Http, window, cx))),
+                            )
+                            .when(ai_on, |d| {
+                                d.child(
+                                    toggle("tb-ai", Lucide::Sparkles, self.tool == Some(Tool::Ai), "AI Assistant (⌘I)")
+                                        .on_click(cx.listener(|this, _, window, cx| this.show_tool(Tool::Ai, window, cx))),
+                                )
+                            }),
+                    ),
             )
     }
 
     fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let mode = self.sidebar_mode;
-        let tab = |id: &'static str, icon: Lucide, m: SidebarMode, tip: &'static str| {
-            Button::new(id)
-                .ghost()
-                .xsmall()
-                .icon(icon)
-                .selected(mode == m)
-                .tooltip(tip)
+        let tab = |id: &'static str, icon: Lucide, label: &'static str, m: SidebarMode| {
+            let active = mode == m;
+            h_flex()
+                .id(id)
+                .flex_1()
+                .h(px(24.))
+                .gap_1p5()
+                .justify_center()
+                .rounded(theme.radius)
+                .text_xs()
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .when(active, |d| {
+                    d.bg(theme.background)
+                        .text_color(theme.foreground)
+                        .border_1()
+                        .border_color(theme.border)
+                        .shadow_xs()
+                })
+                .when(!active, |d| {
+                    d.text_color(theme.muted_foreground)
+                        .hover(|d| d.text_color(theme.foreground))
+                })
+                .child(gpui_kit::component::Icon::new(icon).size(px(13.)))
+                .child(label)
         };
         v_flex()
             .size_full()
@@ -1263,25 +1359,29 @@ impl Workspace {
             .border_r_1()
             .border_color(theme.sidebar_border)
             .child(
-                h_flex()
-                    .h(px(30.))
-                    .px_1p5()
-                    .gap_0p5()
-                    .child(
-                        tab("sb-files", Lucide::Files, SidebarMode::Files, "Explorer (⇧⌘E)")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.sidebar_mode = SidebarMode::Files;
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        tab("sb-search", Lucide::Search, SidebarMode::Search, "Find in Files (⇧⌘F)")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.sidebar_mode = SidebarMode::Search;
-                                { let q = this.search.read(cx).input(); q.update(cx, |s, cx| s.focus(window, cx)); }
-                                cx.notify();
-                            })),
-                    ),
+                div().p_2().child(
+                    h_flex()
+                        .p_0p5()
+                        .gap_0p5()
+                        .rounded(theme.radius_lg)
+                        .bg(theme.secondary.opacity(0.7))
+                        .child(
+                            tab("sb-files", Lucide::Files, "Explorer", SidebarMode::Files)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.sidebar_mode = SidebarMode::Files;
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            tab("sb-search", Lucide::Search, "Search", SidebarMode::Search)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.sidebar_mode = SidebarMode::Search;
+                                    let q = this.search.read(cx).input();
+                                    q.update(cx, |s, cx| s.focus(window, cx));
+                                    cx.notify();
+                                })),
+                        ),
+                ),
             )
             .child(
                 div()
@@ -1340,7 +1440,14 @@ impl Workspace {
                         d.text_color(theme.tab_foreground)
                             .hover(|d| d.text_color(theme.foreground))
                     })
-                    .child(img(icon).size(px(15.)))
+                    .map(|d| match &b.kind {
+                        BufferKind::Settings(_) => d.child(
+                            gpui_kit::component::Icon::new(IconName::Settings)
+                                .size(px(14.))
+                                .text_color(theme.muted_foreground),
+                        ),
+                        _ => d.child(img(icon).size(px(15.))),
+                    })
                     .child(b.title())
                     .child(
                         div()
@@ -1392,7 +1499,7 @@ impl Workspace {
         let has_root = self.root(cx).is_some();
         let hint = |keys: &'static str, label: &'static str| {
             h_flex()
-                .w(px(280.))
+                .w(px(300.))
                 .justify_between()
                 .text_sm()
                 .child(div().text_color(theme.muted_foreground).child(label))
@@ -1412,14 +1519,27 @@ impl Workspace {
             .size_full()
             .items_center()
             .justify_center()
-            .gap_6()
+            .gap_8()
             .bg(theme.background)
             .child(
-                div()
-                    .text_size(px(44.))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(theme.foreground.opacity(0.08))
-                    .child("IDE"),
+                v_flex()
+                    .items_center()
+                    .gap_2()
+                    .child(img("brand/eclipse.svg").size(px(150.)))
+                    .child(
+                        div()
+                            .text_size(px(34.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.foreground)
+                            .child(crate::APP_NAME),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .italic()
+                            .text_color(theme.muted_foreground)
+                            .child(crate::TAGLINE),
+                    ),
             )
             .child(
                 v_flex()
@@ -1429,7 +1549,7 @@ impl Workspace {
                     .child(hint("cmd-shift-p", "Commands"))
                     .child(hint("cmd-n", "New File"))
                     .child(hint("cmd-j", "Terminal"))
-                    .child(hint("cmd-shift-b", "Browser")),
+                    .child(hint("cmd-,", "Settings")),
             )
             .when(!has_root && !recent.is_empty(), |d| {
                 d.child(
@@ -1502,6 +1622,7 @@ impl Workspace {
                     .child(img(path).max_w_full().max_h_full().object_fit(ObjectFit::Contain))
                     .into_any_element()
             }
+            BufferKind::Settings(view) => view.clone().into_any_element(),
             BufferKind::Binary => v_flex()
                 .size_full()
                 .items_center()
@@ -1620,16 +1741,14 @@ impl Workspace {
         let theme = cx.theme().clone();
         let settings = Settings::get(cx).clone();
         let mut right: Vec<AnyElement> = Vec::new();
-        let item = |id: &'static str, text: String| {
-            div()
+        let item = |id: &'static str| {
+            h_flex()
                 .id(id)
-                .px_1p5()
+                .gap_1()
+                .px_2()
                 .h_full()
-                .flex()
-                .items_center()
                 .cursor_pointer()
                 .hover(|d| d.bg(theme.secondary_hover).text_color(theme.foreground))
-                .child(text)
         };
         if let Some(ix) = self.active {
             let b = &self.buffers[ix];
@@ -1637,27 +1756,44 @@ impl Workspace {
                 let state = editor.read(cx);
                 let pos = state.cursor_position();
                 right.push(
-                    item("sb-pos", format!("Ln {}, Col {}", pos.line + 1, pos.character + 1))
+                    item("sb-pos")
+                        .child(format!("Ln {}, Col {}", pos.line + 1, pos.character + 1))
                         .on_click(cx.listener(|this, _, window, cx| this.open_palette(":", window, cx)))
                         .into_any_element(),
                 );
                 let tab = b.tab;
                 right.push(
-                    item(
-                        "sb-indent",
-                        if tab.hard_tabs {
+                    item("sb-indent")
+                        .child(if tab.hard_tabs {
                             "Tabs".to_string()
                         } else {
                             format!("Spaces: {}", tab.tab_size)
-                        },
-                    )
-                    .into_any_element(),
+                        })
+                        .into_any_element(),
                 );
+                right.push(
+                    item("sb-wrap")
+                        .when(settings.soft_wrap, |d| d.text_color(theme.primary))
+                        .child(gpui_kit::component::Icon::new(Lucide::TextWrap).size(px(12.)))
+                        .child("Wrap")
+                        .tooltip(|window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new("Toggle word wrap (⌥Z)").build(window, cx)
+                        })
+                        .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleSoftWrap), cx))
+                        .into_any_element(),
+                );
+                right.push(item("sb-lang").child(icons::language_label(&b.language)).into_any_element());
             }
-            right.push(item("sb-lang", icons::language_label(&b.language)).into_any_element());
             if let Some(name) = b.path.as_ref().and_then(|p| formatter::formatter_name(p)) {
                 right.push(
-                    item("sb-fmt", format!("{}{name}", if settings.format_on_save { "✓ " } else { "" }))
+                    item("sb-fmt")
+                        .when(settings.format_on_save, |d| {
+                            d.child(gpui_kit::component::Icon::new(IconName::Check).size(px(11.)))
+                        })
+                        .child(name)
+                        .tooltip(|window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new("Format document (⇧⌥F)").build(window, cx)
+                        })
                         .on_click(cx.listener(|this, _, window, cx| {
                             if let Some(ix) = this.active {
                                 this.save_buffer(ix, true, window, cx);
@@ -1669,7 +1805,7 @@ impl Workspace {
         }
 
         h_flex()
-            .h(px(24.))
+            .h(px(26.))
             .flex_shrink_0()
             .px_1()
             .justify_between()
@@ -1681,10 +1817,37 @@ impl Workspace {
             .child(
                 h_flex()
                     .h_full()
+                    .child(
+                        item("sb-settings")
+                            .child(gpui_kit::component::Icon::new(IconName::Settings).size(px(13.)))
+                            .tooltip(|window, cx| {
+                                gpui_kit::component::tooltip::Tooltip::new("Settings (⌘,)").build(window, cx)
+                            })
+                            .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx))),
+                    )
+                    .when_some(self.branch.clone(), |d, branch| {
+                        d.child(
+                            item("sb-branch")
+                                .child(gpui_kit::component::Icon::new(Lucide::GitBranch).size(px(12.)))
+                                .child(branch)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.new_terminal(None, window, cx);
+                                    let t = this.terminals.last().cloned();
+                                    if let Some(t) = t {
+                                        t.update(cx, |t, _| t.run("git status", false));
+                                    }
+                                })),
+                        )
+                    })
                     .when_some(self.live.as_ref(), |d, live| {
                         d.child(
-                            item("sb-live", format!("● Live :{}", live.port))
+                            item("sb-live")
                                 .text_color(theme.success)
+                                .child(div().size(px(6.)).rounded_full().bg(theme.success))
+                                .child(format!("Live :{}", live.port))
+                                .tooltip(|window, cx| {
+                                    gpui_kit::component::tooltip::Tooltip::new("Stop Live Server").build(window, cx)
+                                })
                                 .on_click(cx.listener(|this, _, window, cx| this.toggle_live(window, cx))),
                         )
                     }),
@@ -1827,11 +1990,8 @@ impl Render for Workspace {
                 }
             }))
             .on_action(cx.listener(|this, _: &SetupAi, window, cx| {
-                let mut settings = Settings::get(cx).clone();
-                if !settings.ai.enabled {
-                    settings.ai.enabled = true;
-                    settings.save();
-                    cx.set_global(settings);
+                if !Settings::get(cx).ai.enabled {
+                    Settings::update(cx, |s| s.ai.enabled = true);
                 }
                 if this.tool != Some(Tool::Ai) {
                     this.show_tool(Tool::Ai, window, cx);
@@ -1849,7 +2009,8 @@ impl Render for Workspace {
                 }
             }))
             .on_action(cx.listener(|this, _: &ToggleLiveServer, window, cx| this.toggle_live(window, cx)))
-            .on_action(cx.listener(|this, _: &OpenSettings, window, cx| {
+            .on_action(cx.listener(|this, _: &OpenSettings, window, cx| this.open_settings(window, cx)))
+            .on_action(cx.listener(|this, _: &OpenSettingsJson, window, cx| {
                 let path = Settings::path();
                 if !path.exists() {
                     Settings::get(cx).save();
@@ -1869,28 +2030,14 @@ impl Render for Workspace {
                 }
             }))
             .on_action(cx.listener(|_, _: &ToggleTheme, _, cx| {
-                let mut settings = Settings::get(cx).clone();
-                settings.theme = if cx.theme().is_dark() { "Daylight".into() } else { "Midnight".into() };
-                crate::apply_theme(&settings.theme, cx);
-                settings.save();
-                cx.set_global(settings);
+                let dark = cx.theme().is_dark();
+                Settings::update(cx, |s| s.theme = if dark { "Lunar".into() } else { "Eclipse".into() });
             }))
-            .on_action(cx.listener(|this, _: &ToggleSoftWrap, window, cx| {
-                let mut settings = Settings::get(cx).clone();
-                settings.soft_wrap = !settings.soft_wrap;
-                for b in &this.buffers {
-                    if let Some(e) = b.editor() {
-                        e.update(cx, |e, cx| e.set_soft_wrap(settings.soft_wrap, window, cx));
-                    }
-                }
-                settings.save();
-                cx.set_global(settings);
+            .on_action(cx.listener(|_, _: &ToggleSoftWrap, _, cx| {
+                Settings::update(cx, |s| s.soft_wrap = !s.soft_wrap);
             }))
             .on_action(cx.listener(|_, _: &ToggleRainbowIndent, _, cx| {
-                let mut settings = Settings::get(cx).clone();
-                settings.rainbow_indent = !settings.rainbow_indent;
-                settings.save();
-                cx.set_global(settings);
+                Settings::update(cx, |s| s.rainbow_indent = !s.rainbow_indent);
             }))
             .on_action(cx.listener(|_, _: &Quit, _, cx| cx.quit()))
             .child(self.render_title_bar(cx))
