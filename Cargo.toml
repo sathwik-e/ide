@@ -1,0 +1,49 @@
+[package]
+name = "ide"
+version = "0.1.0"
+edition = "2024"
+description = "A fast, minimal, native code editor written in Rust."
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "ide"
+path = "src/main.rs"
+
+[dependencies]
+gpui-kit = { version = "0.11.0", features = ["tree-sitter-languages", "syntect", "gpui-fast"] }
+gpui-webview = { version = "0.11.0", features = ["gpui-fast"] }
+wry = { package = "lb-wry", version = "0.53.3", features = ["devtools"] }
+rust-embed = "8"
+
+alacritty_terminal = "0.26"
+anyhow = "1"
+dirs = "6"
+ignore = "0.4"
+nucleo-matcher = "0.3"
+notify = "8.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+smol = "2"
+tiny_http = "0.12"
+ureq = { version = "3", features = ["json"] }
+log = "0.4"
+env_logger = "0.11"
+open = "5"
+trash = "5"
+http = "1"
+
+[patch.crates-io]
+gpui-base = { path = "vendor/gpui-base" }
+gpui-component = { path = "vendor/gpui-component" }
+
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = true
