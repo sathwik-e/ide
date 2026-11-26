@@ -8,7 +8,6 @@ use gpui_kit::{AssetSource, Result, SharedString};
 #[derive(rust_embed::RustEmbed)]
 #[folder = "assets"]
 #[include = "icons/**/*.svg"]
-#[include = "themes/*.json"]
 #[include = "fonts/*.ttf"]
 pub struct AppAssets;
 
@@ -40,10 +39,4 @@ pub fn font_bytes() -> Vec<Cow<'static, [u8]>> {
         .filter(|name| name.starts_with("fonts/"))
         .filter_map(|name| AppAssets::get(&name).map(|f| f.data))
         .collect()
-}
-
-pub fn theme_json() -> String {
-    AppAssets::get("themes/orion.json")
-        .map(|f| String::from_utf8_lossy(&f.data).into_owned())
-        .unwrap_or_default()
 }

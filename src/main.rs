@@ -1,3 +1,4 @@
+#![recursion_limit = "512"]
 //! Orion IDE — a fast, native code editor in Rust.
 
 mod ai;
@@ -14,6 +15,7 @@ mod search;
 mod settings;
 mod settings_view;
 mod terminal;
+mod themes;
 mod util;
 mod workspace;
 
@@ -45,6 +47,7 @@ fn parse_hex(hex: &str) -> Option<Hsla> {
 
 /// Apply the theme, accent and editor font from settings.
 pub fn apply_theme(settings: &Settings, cx: &mut App) {
+    themes::register_all(settings, cx);
     let registry = ThemeRegistry::global(cx).themes().clone();
     let config = registry
         .get(&SharedString::from(settings.theme.clone()))
@@ -83,7 +86,13 @@ pub fn apply_theme(settings: &Settings, cx: &mut App) {
 }
 
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    // Log to a file as well: a Finder-launched app has nowhere to print.
+    let mut logger = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
+    let _ = std::fs::create_dir_all(Settings::dir());
+    if let Ok(file) = std::fs::File::create(Settings::dir().join("orion.log")) {
+        logger.target(env_logger::Target::Pipe(Box::new(file)));
+    }
+    logger.init();
 
     gpui_kit::application()
         .with_assets(assets::Assets)
@@ -92,11 +101,6 @@ fn main() {
 
             if let Err(err) = cx.text_system().add_fonts(assets::font_bytes()) {
                 log::warn!("failed to load bundled fonts: {err}");
-            }
-            if let Err(err) =
-                ThemeRegistry::global_mut(cx).load_themes_from_str(&assets::theme_json())
-            {
-                log::warn!("failed to load themes: {err}");
             }
 
             let settings = Settings::load();

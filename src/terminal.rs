@@ -90,6 +90,7 @@ impl TerminalView {
             cell_height: 16,
         };
         let pty = tty::new(&options, window_size, 0).expect("failed to open a pty");
+        log::info!("terminal shell {shell} started as pid {}", pty.child().id());
         let event_loop = EventLoop::new(term.clone(), listener, pty, true, false)
             .expect("failed to start terminal");
         let notifier = Notifier(event_loop.channel());
@@ -153,6 +154,7 @@ impl TerminalView {
                 self.write(format(ws).into_bytes());
             }
             TermEvent::Exit | TermEvent::ChildExit(_) => {
+                log::warn!("terminal shell exited: {event:?}");
                 self.exited = true;
                 cx.emit(TerminalEvent::Exited);
                 cx.notify();

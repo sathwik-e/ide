@@ -27,6 +27,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSDocumentsFolderUsageDescription</key><string>Orion opens and edits the projects you keep in Documents.</string>
+  <key>NSDesktopFolderUsageDescription</key><string>Orion opens and edits the projects you keep on the Desktop.</string>
+  <key>NSDownloadsFolderUsageDescription</key><string>Orion opens and edits files you have downloaded.</string>
+  <key>NSRemovableVolumesUsageDescription</key><string>Orion opens projects stored on external drives.</string>
+  <key>NSNetworkVolumesUsageDescription</key><string>Orion opens projects stored on network drives.</string>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
   <key>NSAppTransportSecurity</key>
   <dict><key>NSAllowsArbitraryLoads</key><true/><key>NSAllowsLocalNetworking</key><true/></dict>

@@ -28,7 +28,7 @@ Built on [GPUI](https://github.com/zed-industries/zed) (Zed's GPU-accelerated UI
 | **Optional AI** | Off by default. Turn it on from the palette (*AI: Set Up Assistant*) with your own key for **Claude**, **ChatGPT** or **Gemini**. Answers stream in a side panel, and the open file can be included as context. |
 | **Command palette / quick open** | `⌘P` for files (fuzzy), `>` for commands, `:` to go to a line. `⇧⌘P` opens directly into commands. |
 | **Find in files** | `⇧⌘F`. Respects `.gitignore`. |
-| **Themes & customization** | Glass or solid window. Six themes (Orion, Nebula, Aurora, Midnight, Supernova, Lunar), six accent colors, editor font (JetBrains Mono bundled, SF Mono, Menlo, Monaco), editor and terminal font size, word wrap, rainbow guides, line numbers, tab size, format and auto save, all in a Settings tab (`⌘,`) that applies changes instantly. |
+| **Themes & customization** | 18 built-in themes (Orion, Nebula, Aurora, Midnight, Supernova, Andromeda, Event Horizon, Mars, Saturn, Neptune, Pulsar, Titan, Galaxy, Comet, Lunar, Polaris, Cosmic Latte, Solstice), a **Custom theme** editor with color pickers for every UI and syntax color, drop-in JSON themes, accent colors, Glass/Solid window with Clear/Frosted/Tinted strength, fonts and sizes. All in Settings (gear in the title bar, or `⌘,`), applied instantly. |
 | **Word wrap** | One click on **Wrap** in the status bar, `⌥Z`, or the Settings switch. |
 
 ## Keyboard
@@ -46,8 +46,10 @@ Built on [GPUI](https://github.com/zed-industries/zed) (Zed's GPU-accelerated UI
 
 ```jsonc
 {
-  "theme": "Orion",                // Nebula, Aurora, Midnight, Supernova, Lunar
+  "theme": "Orion",                // any built-in, "Custom", or a theme from the themes folder
   "glass": true,                   // translucent, blurred window chrome
+  "glass_strength": "frosted",     // "clear" | "frosted" | "tinted"
+  "custom_theme": { "dark": true, "background": "#0e0f13", "accent": "#8ab4ff", "...": "..." },
   "accent": "",                    // "" = theme accent, or a hex like "#4fd8b8"
   "editor_font": "JetBrains Mono",
   "font_size": 13.0,
@@ -71,6 +73,10 @@ Built on [GPUI](https://github.com/zed-industries/zed) (Zed's GPU-accelerated UI
   }
 }
 ```
+
+## Custom themes
+
+Pick **Custom** in Settings and set any color, or click *Start from …* to copy the current theme and tweak it. To share or hand-write themes, put a GPUI Kit theme-set `.json` in `~/Library/Application Support/orion/themes/` (*Open themes folder* in Settings). It shows up in the gallery.
 
 ## Build
 
@@ -105,8 +111,8 @@ src/
   http_client.rs   HTTP client panel
   ai.rs            optional Claude / ChatGPT / Gemini chat
   icons.rs         file icons and language detection
+  themes.rs        theme engine: palettes → full themes, custom + user themes
 script/
-  gen_themes.py    generates assets/themes/orion.json from compact palettes
   bundle-macos.sh  builds Orion.app
   settings.rs      settings and session persistence
   settings_view.rs Settings tab

@@ -148,6 +148,12 @@ impl ThemeRegistry {
         &self.default_themes[&ThemeMode::Dark]
     }
 
+    /// IDE patch: add or replace a theme by name (used for live custom themes).
+    pub fn upsert_theme(&mut self, theme: ThemeConfig) {
+        self.themes.insert(theme.name.clone(), Rc::new(theme));
+        self.has_custom_themes = true;
+    }
+
     pub fn load_themes_from_str(&mut self, content: &str) -> anyhow::Result<()> {
         let theme_set = serde_json::from_str::<ThemeSet>(content)?;
         for theme in theme_set.themes {

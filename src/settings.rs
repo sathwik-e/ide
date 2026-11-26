@@ -14,6 +14,10 @@ pub struct Settings {
     pub theme: String,
     /// Translucent, blurred window chrome (true) or solid (false).
     pub glass: bool,
+    /// How much the glass is tinted: "clear", "frosted" or "tinted".
+    pub glass_strength: String,
+    /// The user's own theme, edited in Settings and selectable as "Custom".
+    pub custom_theme: crate::themes::Palette,
     /// Accent color as hex ("#f2b36d"); empty uses the theme's own accent.
     pub accent: String,
     /// Editor and terminal font family.
@@ -61,6 +65,8 @@ impl Default for Settings {
         Self {
             theme: "Orion".into(),
             glass: true,
+            glass_strength: "frosted".into(),
+            custom_theme: crate::themes::Palette::default(),
             accent: String::new(),
             editor_font: "JetBrains Mono".into(),
             font_size: 13.0,
@@ -172,6 +178,15 @@ impl Settings {
         settings.save();
         crate::apply_theme(&settings, cx);
         cx.set_global(settings);
+    }
+
+    /// Opacity of the window tint behind glass chrome.
+    pub fn glass_tint(&self) -> f32 {
+        match self.glass_strength.as_str() {
+            "clear" => 0.42,
+            "tinted" => 0.86,
+            _ => 0.68,
+        }
     }
 
     pub fn ai_ready(&self) -> bool {

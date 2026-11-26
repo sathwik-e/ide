@@ -796,7 +796,7 @@ impl Workspace {
         }
         let id = self.next_id;
         self.next_id += 1;
-        let view = cx.new(SettingsView::new);
+        let view = cx.new(|cx| SettingsView::new(window, cx));
         self.push_buffer(
             Buffer {
                 id,
@@ -1218,6 +1218,10 @@ impl Workspace {
             runner::can_run(&p, &settings.runner_executor_map)
         });
         let ai_on = settings.ai.enabled;
+        let settings_open = self
+            .active
+            .and_then(|ix| self.buffers.get(ix))
+            .is_some_and(|b| matches!(b.kind, BufferKind::Settings(_)));
 
         let tool = |id: &'static str, icon: Lucide, active: bool, tip: &'static str| {
             Button::new(id).ghost().small().icon(icon).selected(active).tooltip(tip)
@@ -1328,6 +1332,12 @@ impl Workspace {
                                         .on_click(cx.listener(|this, _, window, cx| this.show_tool(Tool::Ai, window, cx))),
                                 )
                             }),
+                    )
+                    .child(
+                        capsule().child(
+                            tool("tb-settings", Lucide::Settings, settings_open, "Settings  ⌘,")
+                                .on_click(cx.listener(|this, _, window, cx| this.open_settings(window, cx))),
+                        ),
                     ),
             )
     }
