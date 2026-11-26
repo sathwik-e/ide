@@ -413,6 +413,8 @@ impl Workspace {
                 }
             }
         }
+        // A terminal is always docked and ready, without taking focus.
+        this.spawn_terminal(None, false, window, cx);
         this
     }
 
@@ -435,6 +437,10 @@ impl Workspace {
             window.set_window_title(crate::APP_NAME);
         }
         self.files_index.clear();
+        if let (Some(r), Some(term)) = (root.as_ref(), self.terminals.first().cloned()) {
+            let cd = format!("cd '{}'", r.to_string_lossy().replace('\'', "'\\''"));
+            term.update(cx, |t, _| t.run(&cd, true));
+        }
         self.branch = root.as_deref().and_then(read_branch);
         self.reindex(cx);
         cx.notify();
@@ -855,6 +861,16 @@ impl Workspace {
     // ------------------------------------------------------------- terminal
 
     fn new_terminal(&mut self, cwd: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Entity<TerminalView> {
+        self.spawn_terminal(cwd, true, window, cx)
+    }
+
+    fn spawn_terminal(
+        &mut self,
+        cwd: Option<PathBuf>,
+        focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<TerminalView> {
         let cwd = cwd.or_else(|| self.root(cx));
         let term = cx.new(|cx| TerminalView::new(cwd, window, cx));
         let sub = cx.subscribe_in(&term, window, |this, term, event, window, cx| match event {
@@ -869,8 +885,10 @@ impl Workspace {
         self.terminals.push(term.clone());
         self.active_terminal = self.terminals.len() - 1;
         self.terminal_visible = true;
-        let focus = term.focus_handle(cx);
-        window.defer(cx, move |window, cx| focus.focus(window, cx));
+        if focus {
+            let handle = term.focus_handle(cx);
+            window.defer(cx, move |window, cx| handle.focus(window, cx));
+        }
         cx.notify();
         term
     }
@@ -1329,12 +1347,9 @@ impl Workspace {
         let icon_btn = |id: &'static str, icon: Lucide, tip: &'static str| {
             Button::new(id).ghost().xsmall().icon(icon).tooltip(tip)
         };
+        let _ = (chrome_fill, chrome_line);
         v_flex()
             .size_full()
-            .rounded(px(12.))
-            .bg(chrome_fill)
-            .border_1()
-            .border_color(chrome_line)
             .overflow_hidden()
             .child(
                 h_flex()
@@ -1408,12 +1423,12 @@ impl Workspace {
         let hover_fill = if dark { white().opacity(0.04) } else { black().opacity(0.03) };
         h_flex()
             .id("tabs")
-            .h(px(42.))
+            .h(px(40.))
             .flex_shrink_0()
             .px_1p5()
             .gap_1()
             .border_b_1()
-            .border_color(theme.border)
+            .border_color(theme.border.opacity(0.6))
             .overflow_x_scroll()
             .children(self.buffers.iter().enumerate().map(|(ix, b)| {
                 let active = self.active == Some(ix);
@@ -1605,10 +1620,10 @@ impl Workspace {
         v_flex()
             .size_full()
             .border_t_1()
-            .border_color(theme.border)
+            .border_color(theme.border.opacity(0.7))
             .child(
                 h_flex()
-                    .h(px(34.))
+                    .h(px(32.))
                     .px_1p5()
                     .gap_1()
                     .children(self.terminals.iter().enumerate().map(|(ix, t)| {
@@ -1692,12 +1707,11 @@ impl Workspace {
         };
         div()
             .size_full()
-            .rounded(px(12.))
             .overflow_hidden()
             .bg(theme.background)
-            .border_1()
+            .border_l_1()
+            .border_t_1()
             .border_color(chrome_line)
-            .shadow_md()
             .children(content)
     }
 
@@ -1765,15 +1779,15 @@ impl Workspace {
             }
         }
 
+        let empty = right.is_empty() && self.branch.is_none() && self.live.is_none();
         h_flex()
-            .h(px(28.))
+            .h(px(26.))
             .flex_shrink_0()
             .px_2()
             .justify_between()
             .text_xs()
             .text_color(theme.muted_foreground)
-            .border_t_1()
-            .border_color(theme.border)
+            .when(empty, |d| d.hidden())
             .child(
                 h_flex()
                     .gap_0p5()
@@ -1832,15 +1846,14 @@ impl Render for Workspace {
         let tool_open = self.tool.is_some();
         let sidebar = self.sidebar_visible;
 
-        // The editor card: tabs + editor, terminal, and the status line.
+        // One continuous solid surface for tabs + editor, terminal and the
+        // status line; only its leading corner is rounded against the glass.
         let card = v_flex()
             .size_full()
-            .rounded(px(12.))
             .overflow_hidden()
             .bg(theme.background)
-            .border_1()
-            .border_color(chrome_line)
-            .shadow_md()
+            .when(sidebar, |d| d.rounded_tl(px(10.)).border_l_1().border_t_1().border_color(chrome_line))
+            .when(!sidebar, |d| d.border_t_1().border_color(chrome_line))
             .child(
                 div().flex_1().min_h_0().child(
                     v_resizable("center")
@@ -1866,26 +1879,17 @@ impl Render for Workspace {
                     .size(px(260.))
                     .size_range(px(180.)..px(560.))
                     .visible(sidebar)
-                    .child(div().size_full().pl_2().pr_1().pb_2().child(self.render_sidebar(cx))),
+                    .child(self.render_sidebar(cx)),
             )
             .child(
-                resizable_panel().size_range(px(240.)..Pixels::MAX).child(
-                    div()
-                        .size_full()
-                        .pb_2()
-                        .when(sidebar, |d| d.pl_1())
-                        .when(!sidebar, |d| d.pl_2())
-                        .when(tool_open, |d| d.pr_1())
-                        .when(!tool_open, |d| d.pr_2())
-                        .child(card),
-                ),
+                resizable_panel().size_range(px(240.)..Pixels::MAX).child(card),
             )
             .child(
                 resizable_panel()
                     .size(px(480.))
                     .size_range(px(300.)..px(1600.))
                     .visible(tool_open)
-                    .child(div().size_full().pl_1().pr_2().pb_2().child(self.render_tool_panel(cx))),
+                    .child(self.render_tool_panel(cx)),
             );
 
         let palette = self.palette.clone().map(|p| {
