@@ -1630,32 +1630,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
-name = "eclipse-ide"
-version = "0.2.0"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "dirs 6.0.0",
- "env_logger",
- "gpui-kit",
- "gpui-webview",
- "http",
- "ignore",
- "lb-wry",
- "log",
- "notify",
- "nucleo-matcher",
- "open",
- "rust-embed",
- "serde",
- "serde_json",
- "smol",
- "tiny_http",
- "trash",
- "ureq",
-]
-
-[[package]]
 name = "either"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5744,6 +5718,32 @@ checksum = "9aa2b01e1d916879f73a53d01d1d6cee68adbb31d6d9177a8cfce093cced1d50"
 dependencies = [
  "futures-core",
  "pin-project-lite",
+]
+
+[[package]]
+name = "orion-ide"
+version = "0.3.0"
+dependencies = [
+ "alacritty_terminal",
+ "anyhow",
+ "dirs 6.0.0",
+ "env_logger",
+ "gpui-kit",
+ "gpui-webview",
+ "http",
+ "ignore",
+ "lb-wry",
+ "log",
+ "notify",
+ "nucleo-matcher",
+ "open",
+ "rust-embed",
+ "serde",
+ "serde_json",
+ "smol",
+ "tiny_http",
+ "trash",
+ "ureq",
 ]
 
 [[package]]

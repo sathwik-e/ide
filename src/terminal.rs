@@ -76,7 +76,7 @@ impl TerminalView {
         let mut env = HashMap::new();
         env.insert("TERM".to_string(), "xterm-256color".to_string());
         env.insert("COLORTERM".to_string(), "truecolor".to_string());
-        env.insert("TERM_PROGRAM".to_string(), "eclipse".to_string());
+        env.insert("TERM_PROGRAM".to_string(), "orion".to_string());
         let options = tty::Options {
             shell: Some(tty::Shell::new(shell.clone(), vec!["-l".into()])),
             working_directory: cwd.filter(|p| p.is_dir()).or_else(dirs::home_dir),

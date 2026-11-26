@@ -1,4 +1,4 @@
-//! Eclipse — everything from the cosmos. A fast, native code editor in Rust.
+//! Orion IDE — a fast, native code editor in Rust.
 
 mod ai;
 mod assets;
@@ -17,14 +17,13 @@ mod terminal;
 mod util;
 mod workspace;
 
-use gpui_kit::component::{Theme, ThemeRegistry, TitleBar};
+use gpui_kit::component::{Theme, ThemeRegistry, TitleBar, TransparentRoot};
 use gpui_kit::*;
 
 use crate::settings::Settings;
 use crate::workspace::Workspace;
 
-pub const APP_NAME: &str = "Eclipse";
-pub const TAGLINE: &str = "everything from the cosmos";
+pub const APP_NAME: &str = "Orion";
 
 /// Accent swatches offered in Settings: (name, hex).
 pub const ACCENTS: &[(&str, &str)] = &[
@@ -49,7 +48,7 @@ pub fn apply_theme(settings: &Settings, cx: &mut App) {
     let registry = ThemeRegistry::global(cx).themes().clone();
     let config = registry
         .get(&SharedString::from(settings.theme.clone()))
-        .or_else(|| registry.get(&SharedString::from("Eclipse")))
+        .or_else(|| registry.get(&SharedString::from("Orion")))
         .cloned();
     let accent = parse_hex(&settings.accent);
     let font: SharedString = settings.editor_font.clone().into();
@@ -102,7 +101,10 @@ fn main() {
 
             let settings = Settings::load();
             apply_theme(&settings, cx);
+            let glass = settings.glass;
             cx.set_global(settings);
+            // The workspace paints its own (possibly translucent) backdrop.
+            cx.set_global(TransparentRoot(true));
 
             workspace::bind_keys(cx);
             workspace::set_menus(cx);
@@ -115,11 +117,19 @@ fn main() {
             cx.activate(true);
 
             let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
-            let options = WindowOptions {
+            let mut options = WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(720.), px(480.))),
+                window_background: if glass {
+                    WindowBackgroundAppearance::Blurred
+                } else {
+                    WindowBackgroundAppearance::Opaque
+                },
                 ..TitleBar::window_options()
             };
+            if let Some(titlebar) = options.titlebar.as_mut() {
+                titlebar.traffic_light_position = Some(point(px(16.), px(16.)));
+            }
             gpui_kit::open_window(options, cx, |window, cx| {
                 window.set_window_title(APP_NAME);
                 let ws = cx.new(|cx| Workspace::new(window, cx));

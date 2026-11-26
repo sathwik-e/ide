@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Build Eclipse.app (release) into target/release/bundle/.
+# Build Orion.app (release) into target/release/bundle/.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 cargo build --release
 
-APP="target/release/bundle/Eclipse.app"
-rm -rf "$APP" target/release/bundle/IDE.app
+APP="target/release/bundle/Orion.app"
+rm -rf "$APP" target/release/bundle/IDE.app target/release/bundle/Eclipse.app
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/release/eclipse "$APP/Contents/MacOS/eclipse"
+cp target/release/orion "$APP/Contents/MacOS/orion"
 [ -f assets/AppIcon.icns ] && cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 VERSION=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
@@ -17,10 +17,10 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Eclipse</string>
-  <key>CFBundleDisplayName</key><string>Eclipse</string>
-  <key>CFBundleIdentifier</key><string>dev.eclipse-ide.app</string>
-  <key>CFBundleExecutable</key><string>eclipse</string>
+  <key>CFBundleName</key><string>Orion</string>
+  <key>CFBundleDisplayName</key><string>Orion</string>
+  <key>CFBundleIdentifier</key><string>dev.orion-ide.app</string>
+  <key>CFBundleExecutable</key><string>orion</string>
   <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>

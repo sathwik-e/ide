@@ -393,65 +393,13 @@ impl Render for Explorer {
                 )
                 .into_any_element();
         };
-        let root_name = root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_uppercase())
-            .unwrap_or_default();
+        let _ = root;
         let view = cx.entity();
         let count = self.rows.len();
 
         v_flex()
             .size_full()
             .track_focus(&self.focus_handle)
-            .child(
-                h_flex()
-                    .group("explorer-header")
-                    .h(px(30.))
-                    .pl_3()
-                    .pr_1()
-                    .justify_between()
-                    .child(
-                        div()
-                            .text_xs()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.muted_foreground)
-                            .truncate()
-                            .child(root_name),
-                    )
-                    .child(
-                        h_flex()
-                            .invisible()
-                            .group_hover("explorer-header", |s| s.visible())
-                            .child(
-                                Button::new("new-file")
-                                    .ghost()
-                                    .xsmall()
-                                    .icon(gpui_kit::assets::IconName::FilePlus)
-                                    .tooltip("New File")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.prompt_new(false, None, window, cx)
-                                    })),
-                            )
-                            .child(
-                                Button::new("new-folder")
-                                    .ghost()
-                                    .xsmall()
-                                    .icon(gpui_kit::assets::IconName::FolderPlus)
-                                    .tooltip("New Folder")
-                                    .on_click(cx.listener(|this, _, window, cx| {
-                                        this.prompt_new(true, None, window, cx)
-                                    })),
-                            )
-                            .child(
-                                Button::new("collapse")
-                                    .ghost()
-                                    .xsmall()
-                                    .icon(IconName::ChevronsUpDown)
-                                    .tooltip("Collapse All")
-                                    .on_click(cx.listener(|this, _, _, cx| this.collapse_all(cx))),
-                            ),
-                    ),
-            )
             .child(
                 div()
                     .flex_1()
@@ -561,7 +509,7 @@ impl Render for Explorer {
                                         div()
                                             .id(SharedString::from(row.path.to_string_lossy().to_string()))
                                             .w_full()
-                                            .h(px(26.))
+                                            .h(px(28.))
                                             .px_1p5()
                                             .cursor_pointer()
                                             .child(
@@ -572,21 +520,10 @@ impl Render for Explorer {
                                                     .pl(px(6. + row.depth as f32 * 14.))
                                                     .pr_2()
                                                     .gap_1p5()
-                                                    .rounded(theme.radius)
+                                                    .rounded(px(7.))
                                                     .text_sm()
                                                     .when(active, |d| {
-                                                        d.bg(theme.list_active)
-                                                            .text_color(theme.foreground)
-                                                            .child(
-                                                                div()
-                                                                    .absolute()
-                                                                    .left_0()
-                                                                    .top(px(5.))
-                                                                    .bottom(px(5.))
-                                                                    .w(px(2.))
-                                                                    .rounded_full()
-                                                                    .bg(theme.primary),
-                                                            )
+                                                        d.bg(theme.list_active).text_color(theme.foreground)
                                                     })
                                                     .when(!active && selected, |d| d.bg(theme.list_hover))
                                                     .when(!active, |d| {

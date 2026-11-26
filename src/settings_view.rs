@@ -16,7 +16,7 @@ use crate::settings::Settings;
 
 /// Preview swatches for the theme cards: name, bg, panel, fg, accent, keyword, string, function.
 const THEME_PREVIEWS: &[(&str, u32, u32, u32, u32, u32, u32, u32)] = &[
-    ("Eclipse", 0x0e0f13, 0x0a0b0e, 0xd8d9df, 0xf2b36d, 0xc4a0ff, 0xa8d995, 0x8ab4ff),
+    ("Orion", 0x0e0f13, 0x0a0b0e, 0xd8d9df, 0xf2b36d, 0xc4a0ff, 0xa8d995, 0x8ab4ff),
     ("Nebula", 0x110f1c, 0x0c0a15, 0xdcd7ee, 0xb48cff, 0xff8bd0, 0xb5e6a3, 0x9bb8ff),
     ("Aurora", 0x0b1214, 0x080e10, 0xd3e4e4, 0x4fd8b8, 0x7dd8ff, 0xd6e88a, 0x7ee8c3),
     ("Midnight", 0x0f1116, 0x0b0d11, 0xd5d8e0, 0x7c9cff, 0xc49bff, 0xa8d995, 0x82aaff),
@@ -211,6 +211,15 @@ impl Render for SettingsView {
                 .on_click(move |_, _, cx| Settings::update(cx, |s| s.editor_font = font.to_string()))
         }));
 
+        let materials = h_flex().gap_1().children([(true, "Glass"), (false, "Solid")].into_iter().map(|(glass, label)| {
+            Button::new(SharedString::from(format!("material-{label}")))
+                .small()
+                .outline()
+                .selected(s.glass == glass)
+                .label(label)
+                .on_click(move |_, _, cx| Settings::update(cx, |s| s.glass = glass))
+        }));
+
         let tab_sizes = h_flex().gap_1().children([2usize, 4, 8].into_iter().map(|n| {
             Button::new(SharedString::from(format!("tab-{n}")))
                 .small()
@@ -231,26 +240,13 @@ impl Render for SettingsView {
                     .max_w(px(760.))
                     .mx_auto()
                     .px_10()
-                    .py_10()
-                    .gap_10()
-                    .child(
-                        h_flex()
-                            .gap_4()
-                            .child(img("brand/eclipse.svg").size(px(56.)))
-                            .child(
-                                v_flex()
-                                    .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("Settings"))
-                                    .child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(theme.muted_foreground)
-                                            .child("Changes apply instantly."),
-                                    ),
-                            ),
-                    )
+                    .py_8()
+                    .gap_8()
+                    .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("Settings"))
                     .child(
                         section("Appearance", cx)
                             .child(div().pb_2().child(theme_cards))
+                            .child(row("Window", "Translucent glass or a solid background", materials, cx))
                             .child(row("Accent color", "Highlights, cursor, selection and buttons", accents, cx))
                             .child(row("Editor font", "Used by the editor and terminal", fonts, cx))
                             .child(row(

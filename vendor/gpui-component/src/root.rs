@@ -725,6 +725,12 @@ impl WindowState {
     }
 }
 
+/// IDE patch: when set, the window root paints no background so an
+/// application can draw its own (e.g. over a blurred, translucent window).
+#[derive(Clone, Copy, Default)]
+pub struct TransparentRoot(pub bool);
+impl gpui::Global for TransparentRoot {}
+
 impl gpui_base::RootPlugin for WindowState {
     fn prepare(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.dismiss_removed_tooltip(window, cx);
@@ -736,10 +742,15 @@ impl gpui_base::RootPlugin for WindowState {
         use gpui::Refineable as _;
         // The surface's background must follow the window's rounded corners.
         let radii = window_border::window_corner_radii(window, cx);
+        let transparent = cx.try_global::<TransparentRoot>().is_some_and(|t| t.0);
+        let base = gpui::StyleRefinement::default().font_family(cx.theme().font_family.clone());
+        let base = if transparent {
+            base.bg(gpui::transparent_black())
+        } else {
+            base.bg(cx.theme().tokens.background)
+        };
         surface.style().refine(
-            &gpui::StyleRefinement::default()
-                .font_family(cx.theme().font_family.clone())
-                .bg(cx.theme().tokens.background)
+            &base
                 .text_color(cx.theme().foreground)
                 .rounded_tl(radii.top_left)
                 .rounded_tr(radii.top_right)

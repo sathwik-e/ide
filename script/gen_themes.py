@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate assets/themes/eclipse.json from compact palettes.
+"""Generate assets/themes/orion.json from compact palettes.
 
 Each theme is defined by a handful of base colors; every UI token and syntax
 color is derived from them so all themes stay consistent.
@@ -10,7 +10,7 @@ import os
 
 THEMES = [
     # name, mode, bg, panel (sidebar/title), border, fg, muted, accent, syntax
-    dict(name="Eclipse", mode="dark", bg="#0e0f13", panel="#0a0b0e", border="#1d1f26",
+    dict(name="Orion", mode="dark", bg="#0e0f13", panel="#0a0b0e", border="#1d1f26",
          fg="#d8d9df", muted="#6c7080", accent="#f2b36d",
          syntax=dict(keyword="#c4a0ff", function="#8ab4ff", string="#a8d995", number="#f2b36d",
                      type="#ffd27a", constant="#f2b36d", comment="#4f5464", tag="#ff8a8a",
@@ -65,39 +65,45 @@ def build(t):
     dark = t["mode"] == "dark"
     bg, panel, border, fg, muted, acc = t["bg"], t["panel"], t["border"], t["fg"], t["muted"], t["accent"]
     on_acc = "#0b0c10" if dark else "#ffffff"
-    hover = mix(bg, fg, 0.06 if dark else 0.045)
-    active = mix(bg, fg, 0.10 if dark else 0.08)
-    surface = mix(bg, fg, 0.035 if dark else 0.02)
+    # Chrome sits on a blurred, translucent window, so interactive fills are
+    # translucent overlays rather than opaque mixes of the background.
+    ov = "#ffffff" if dark else "#000000"
+    hover = alpha(ov, 0.05 if dark else 0.045)
+    active = alpha(ov, 0.09 if dark else 0.07)
+    surface = alpha(ov, 0.06 if dark else 0.04)
+    line = alpha(ov, 0.075 if dark else 0.085)
+    tint = alpha(panel, 0.72 if dark else 0.62)
     s = t["syntax"]
     colors = {
-        "background": bg, "foreground": fg, "border": border, "window.border": mix(border, fg, 0.08),
-        "ring": acc, "caret": acc, "overlay": "#05060899" if dark else "#0000002e",
+        "background": bg, "foreground": fg, "border": line, "window.border": alpha(ov, 0.12),
+        "ring": acc, "caret": acc, "overlay": "#00000066" if dark else "#0000002e",
         "selection.background": alpha(acc, 0.28),
         "accent.background": active, "accent.foreground": fg,
         "primary.background": acc, "primary.hover.background": mix(acc, "#ffffff", 0.12),
         "primary.active.background": mix(acc, "#000000", 0.1), "primary.foreground": on_acc,
         "secondary.background": surface, "secondary.hover.background": hover,
         "secondary.active.background": active, "secondary.foreground": mix(fg, bg, 0.08),
-        "muted.background": surface, "muted.foreground": muted, "input.border": mix(border, fg, 0.06),
-        "popover.background": mix(bg, fg, 0.04) if dark else "#ffffff", "popover.foreground": fg,
-        "list.background": bg, "list.hover.background": hover,
-        "list.active.background": alpha(acc, 0.16), "list.active.border": alpha(acc, 0),
-        "list.even.background": bg, "list.head.background": bg, "list.highlight.foreground": acc,
-        "sidebar.background": panel, "sidebar.foreground": mix(fg, bg, 0.18), "sidebar.border": border,
+        "muted.background": surface, "muted.foreground": muted, "input.border": alpha(ov, 0.11),
+        "popover.background": mix(bg, fg, 0.05) if dark else "#ffffff", "popover.foreground": fg,
+        "list.background": "#00000000", "list.hover.background": hover,
+        "list.active.background": alpha(acc, 0.20), "list.active.border": alpha(acc, 0),
+        "list.even.background": "#00000000", "list.head.background": "#00000000",
+        "list.highlight.foreground": acc,
+        "sidebar.background": tint, "sidebar.foreground": mix(fg, bg, 0.12), "sidebar.border": line,
         "sidebar.accent.background": hover, "sidebar.accent.foreground": fg,
         "sidebar.primary.background": acc, "sidebar.primary.foreground": on_acc,
-        "tab_bar.background": panel, "tab_bar.segmented.background": surface,
-        "tab.background": panel, "tab.foreground": muted,
-        "tab.active.background": bg, "tab.active.foreground": fg,
-        "title_bar.background": panel, "title_bar.border": border,
-        "status_bar.background": panel, "status_bar.border": border,
+        "tab_bar.background": "#00000000", "tab_bar.segmented.background": surface,
+        "tab.background": "#00000000", "tab.foreground": muted,
+        "tab.active.background": active, "tab.active.foreground": fg,
+        "title_bar.background": "#00000000", "title_bar.border": "#00000000",
+        "status_bar.background": "#00000000", "status_bar.border": line,
         "scrollbar.background": "#00000000",
-        "scrollbar.thumb.background": "#ffffff14" if dark else "#0000001c",
-        "scrollbar.thumb.hover.background": "#ffffff2a" if dark else "#00000030",
+        "scrollbar.thumb.background": "#ffffff1a" if dark else "#00000022",
+        "scrollbar.thumb.hover.background": "#ffffff30" if dark else "#00000036",
         "table.background": bg, "table.head.background": panel, "table.head.foreground": muted,
-        "table.hover.background": hover, "table.row.border": border, "table.even.background": bg,
+        "table.hover.background": hover, "table.row.border": line, "table.even.background": bg,
         "link.foreground": acc, "link.hover.foreground": mix(acc, fg, 0.3), "link.active.foreground": acc,
-        "switch.background": active, "skeleton.background": hover,
+        "switch.background": alpha(ov, 0.16), "skeleton.background": hover,
         "drag_border": acc, "drop_target.background": alpha(acc, 0.1),
         "progress_bar.background": acc, "slider.bar.background": acc,
         "success.background": "#3fb98a", "success.foreground": on_acc,
@@ -141,9 +147,9 @@ def build(t):
     }
 
 
-out = {"name": "Eclipse", "author": "Eclipse IDE", "themes": [build(t) for t in THEMES]}
+out = {"name": "Orion", "author": "Orion IDE", "themes": [build(t) for t in THEMES]}
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-path = os.path.join(root, "assets", "themes", "eclipse.json")
+path = os.path.join(root, "assets", "themes", "orion.json")
 with open(path, "w") as f:
     json.dump(out, f, indent=2)
 print("wrote", path, "with", len(THEMES), "themes")

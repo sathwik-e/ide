@@ -10,8 +10,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    /// Eclipse, Nebula, Aurora, Midnight, Supernova (dark) or Lunar (light).
+    /// Orion, Nebula, Aurora, Midnight, Supernova (dark) or Lunar (light).
     pub theme: String,
+    /// Translucent, blurred window chrome (true) or solid (false).
+    pub glass: bool,
     /// Accent color as hex ("#f2b36d"); empty uses the theme's own accent.
     pub accent: String,
     /// Editor and terminal font family.
@@ -57,7 +59,8 @@ pub struct ProviderSettings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            theme: "Eclipse".into(),
+            theme: "Orion".into(),
+            glass: true,
             accent: String::new(),
             editor_font: "JetBrains Mono".into(),
             font_size: 13.0,
@@ -103,11 +106,13 @@ impl Global for Settings {}
 impl Settings {
     pub fn dir() -> PathBuf {
         let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-        let dir = base.join("eclipse");
-        // One-time migration from the app's earlier name.
-        let old = base.join("ide");
-        if !dir.exists() && old.is_dir() {
-            let _ = std::fs::rename(&old, &dir);
+        let dir = base.join("orion");
+        // One-time migration from the app's earlier names.
+        for old in ["eclipse", "ide"] {
+            let old = base.join(old);
+            if !dir.exists() && old.is_dir() {
+                let _ = std::fs::rename(&old, &dir);
+            }
         }
         dir
     }
@@ -124,8 +129,10 @@ impl Settings {
                     log::warn!("settings.json is invalid, using defaults: {err}");
                     Self::default()
                 });
-                if s.theme == "Daylight" {
-                    s.theme = "Lunar".into();
+                match s.theme.as_str() {
+                    "Daylight" => s.theme = "Lunar".into(),
+                    "Eclipse" => s.theme = "Orion".into(),
+                    _ => {}
                 }
                 s
             }

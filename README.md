@@ -1,12 +1,14 @@
-<p align="center"><img src="assets/icon.png" width="140" alt="Eclipse IDE icon"></p>
+<p align="center"><img src="assets/icon.png" width="140" alt="Orion IDE icon"></p>
 
-<h1 align="center">Eclipse IDE</h1>
+<h1 align="center">Orion IDE</h1>
 
 <p align="center"><em>everything from the cosmos</em></p>
 
 <p align="center">A fast, quiet, native code editor written in Rust. No built-in AI, no clutter, and every tool you reach for is already inside it.</p>
 
 ---
+
+The interface follows macOS Liquid Glass: translucent, blurred chrome with the editor, terminal and tools on solid cards so code stays crisp.
 
 Built on [GPUI](https://github.com/zed-industries/zed) (Zed's GPU-accelerated UI framework) and [GPUI Kit](https://github.com/longbridge/gpui-kit). The UI is rendered on the GPU with Metal, and the terminal, browser and HTTP client are all native parts of the app, not plugins.
 
@@ -26,7 +28,7 @@ Built on [GPUI](https://github.com/zed-industries/zed) (Zed's GPU-accelerated UI
 | **Optional AI** | Off by default. Turn it on from the palette (*AI: Set Up Assistant*) with your own key for **Claude**, **ChatGPT** or **Gemini**. Answers stream in a side panel, and the open file can be included as context. |
 | **Command palette / quick open** | `⌘P` for files (fuzzy), `>` for commands, `:` to go to a line. `⇧⌘P` opens directly into commands. |
 | **Find in files** | `⇧⌘F`. Respects `.gitignore`. |
-| **Themes & customization** | Six cosmos themes (Eclipse, Nebula, Aurora, Midnight, Supernova, Lunar), six accent colors, editor font (JetBrains Mono bundled, SF Mono, Menlo, Monaco), editor and terminal font size, word wrap, rainbow guides, line numbers, tab size, format and auto save, all in a Settings tab (`⌘,`) that applies changes instantly. |
+| **Themes & customization** | Glass or solid window. Six themes (Orion, Nebula, Aurora, Midnight, Supernova, Lunar), six accent colors, editor font (JetBrains Mono bundled, SF Mono, Menlo, Monaco), editor and terminal font size, word wrap, rainbow guides, line numbers, tab size, format and auto save, all in a Settings tab (`⌘,`) that applies changes instantly. |
 | **Word wrap** | One click on **Wrap** in the status bar, `⌥Z`, or the Settings switch. |
 
 ## Keyboard
@@ -40,11 +42,12 @@ Built on [GPUI](https://github.com/zed-industries/zed) (Zed's GPU-accelerated UI
 
 ## Settings
 
-`⌘,` opens the Settings tab. Everything else lives in `~/Library/Application Support/eclipse/settings.json` (*Edit settings.json* in Settings). Saving that file applies it too. The file is created with permissions `600`, since it can hold API keys.
+`⌘,` opens the Settings tab. Everything else lives in `~/Library/Application Support/orion/settings.json` (*Edit settings.json* in Settings). Saving that file applies it too. The file is created with permissions `600`, since it can hold API keys.
 
 ```jsonc
 {
-  "theme": "Eclipse",              // Nebula, Aurora, Midnight, Supernova, Lunar
+  "theme": "Orion",                // Nebula, Aurora, Midnight, Supernova, Lunar
+  "glass": true,                   // translucent, blurred window chrome
   "accent": "",                    // "" = theme accent, or a hex like "#4fd8b8"
   "editor_font": "JetBrains Mono",
   "font_size": 13.0,
@@ -78,7 +81,7 @@ cargo run --release -- /path/to/project
 ```
 
 ```bash
-./script/bundle-macos.sh        # builds target/release/bundle/Eclipse.app
+./script/bundle-macos.sh        # builds target/release/bundle/Orion.app
 ```
 
 ```bash
@@ -103,13 +106,13 @@ src/
   ai.rs            optional Claude / ChatGPT / Gemini chat
   icons.rs         file icons and language detection
 script/
-  gen_themes.py    generates assets/themes/eclipse.json from compact palettes
-  bundle-macos.sh  builds Eclipse.app
+  gen_themes.py    generates assets/themes/orion.json from compact palettes
+  bundle-macos.sh  builds Orion.app
   settings.rs      settings and session persistence
   settings_view.rs Settings tab
 vendor/
   gpui-base        GPUI Kit base, patched: rainbow indent guides
-  gpui-component   GPUI Kit components, patched: tree-sitter and syntect highlighting combined
+  gpui-component   GPUI Kit components, patched: tree-sitter + syntect highlighting, transparent root
 ```
 
 ## Credits and licenses

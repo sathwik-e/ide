@@ -9,7 +9,6 @@ use gpui_kit::{AssetSource, Result, SharedString};
 #[folder = "assets"]
 #[include = "icons/**/*.svg"]
 #[include = "themes/*.json"]
-#[include = "brand/*.svg"]
 #[include = "fonts/*.ttf"]
 pub struct AppAssets;
 
@@ -44,7 +43,7 @@ pub fn font_bytes() -> Vec<Cow<'static, [u8]>> {
 }
 
 pub fn theme_json() -> String {
-    AppAssets::get("themes/eclipse.json")
+    AppAssets::get("themes/orion.json")
         .map(|f| String::from_utf8_lossy(&f.data).into_owned())
         .unwrap_or_default()
 }
