@@ -618,6 +618,51 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// Real round trip against a Python server when one is installed.
+    #[test]
+    fn python_server_reports_diagnostics_and_hover() {
+        let Some((spec, bin)) = resolve("python") else {
+            eprintln!("no Python language server installed; skipping");
+            return;
+        };
+        let dir = std::env::temp_dir().join(format!("orion-py-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("app.py");
+        let text = "def greet(name: str) -> str:\n    return 'hi ' + name\n\nprint(greet('a'))\nprint(undefined_name)\n";
+        std::fs::write(&file, text).unwrap();
+        let (tx, rx) = smol::channel::unbounded();
+        let client = LspClient::start(spec, &bin, &dir, tx).expect("python server starts");
+        let _doc = Document::open(client.clone(), &file, "python", text);
+        let diagnostics = smol::block_on(async {
+            smol::future::or(
+                async {
+                    while let Ok(ServerEvent::Diagnostics { uri, diagnostics }) = rx.recv().await {
+                        if uri.ends_with("app.py") && !diagnostics.is_empty() {
+                            return Some(diagnostics);
+                        }
+                    }
+                    None
+                },
+                async {
+                    smol::Timer::after(Duration::from_secs(30)).await;
+                    None
+                },
+            )
+            .await
+        })
+        .expect("diagnostics from the Python server");
+        assert!(diagnostics.iter().any(|d| d.message.contains("undefined_name")), "{diagnostics:?}");
+
+        // Hover over `greet` on line 4 should describe the function.
+        let hover = smol::block_on(client.clone().request(
+            "textDocument/hover",
+            json!({"textDocument": {"uri": path_to_uri(&file)}, "position": {"line": 3, "character": 7}}),
+        ))
+        .expect("hover response");
+        assert!(hover.to_string().contains("greet"), "{hover}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn known_languages_have_candidates() {
         for l in ["rust", "python", "typescript", "go", "cpp", "swift"] {
