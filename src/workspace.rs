@@ -99,6 +99,9 @@ actions!(
 
 const EDITOR_CTX: &str = "Input && mode == editor";
 
+/// Identity for formatter notifications, so a new one replaces the last.
+struct FormatterNotice;
+
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-o", OpenFolder, None),
@@ -355,6 +358,7 @@ pub struct Workspace {
     closed: Vec<PathBuf>,
     zen: Option<(bool, bool, Option<Tool>)>,
     sync_pending: bool,
+    format_error: Option<String>,
     session: Session,
     _index_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -399,7 +403,12 @@ fn walk_files(root: &Path) -> Vec<String> {
     let mut out = Vec::new();
     for entry in ignore::WalkBuilder::new(root)
         .hidden(false)
-        .filter_entry(|e| e.file_name() != ".git")
+        .filter_entry(|e| {
+            !matches!(
+                e.file_name().to_str(),
+                Some(".git" | ".DS_Store" | ".localized" | ".Spotlight-V100" | ".Trashes" | ".fseventsd")
+            )
+        })
         .build()
         .flatten()
     {
@@ -533,6 +542,7 @@ impl Workspace {
             closed: Vec::new(),
             zen: None,
             sync_pending: false,
+            format_error: None,
             session,
             _index_task: None,
             _subscriptions: subs,
@@ -1266,6 +1276,7 @@ impl Workspace {
             let task = cx.background_spawn(async move { formatter::format(&path2, &text).map(|t| (t, text)) });
             cx.spawn_in(window, async move |this, cx| {
                 let result = task.await;
+                let result_ok = result.is_ok();
                 let _ = this.update_in(cx, |this, window, cx| {
                     let final_text = match result {
                         Ok((formatted, original)) => {
@@ -1279,13 +1290,22 @@ impl Workspace {
                             formatted
                         }
                         Err(err) => {
-                            window.push_notification(
-                                Notification::warning(err).title("Formatter"),
-                                cx,
-                            );
+                            // Explicit "Format Document" explains itself; format-on-save
+                            // stays quiet and flags the status line instead, so autosave
+                            // can't stack up warnings.
+                            if format {
+                                window.push_notification(
+                                    Notification::warning(err.clone()).title("Formatter").id::<FormatterNotice>(),
+                                    cx,
+                                );
+                            }
+                            this.format_error = Some(err);
                             editor.read(cx).value().to_string()
                         }
                     };
+                    if result_ok {
+                        this.format_error = None;
+                    }
                     this.write_file(id, &path, &final_text, window, cx);
                 });
             })
@@ -2662,14 +2682,24 @@ impl Workspace {
                 }
             }
             if let Some(name) = b.path.as_ref().and_then(|p| formatter::formatter_name(p)) {
+                let fmt_error: SharedString = self
+                    .format_error
+                    .clone()
+                    .map(|e| format!("Formatting failed: {}", e.lines().next().unwrap_or("")))
+                    .unwrap_or_else(|| "Format Document  ⇧⌥F".into())
+                    .into();
                 right.push(
                     item("sb-fmt")
-                        .when(settings.format_on_save, |d| {
+                        .when(self.format_error.is_some(), |d| d.text_color(theme.danger))
+                        .when(self.format_error.is_some(), |d| {
+                            d.child(gpui_kit::component::Icon::new(IconName::TriangleAlert).size(px(11.)))
+                        })
+                        .when(settings.format_on_save && self.format_error.is_none(), |d| {
                             d.child(gpui_kit::component::Icon::new(IconName::Check).size(px(11.)))
                         })
                         .child(name)
-                        .tooltip(|window, cx| {
-                            gpui_kit::component::tooltip::Tooltip::new("Format Document  ⇧⌥F").build(window, cx)
+                        .tooltip(move |window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(fmt_error.clone()).build(window, cx)
                         })
                         .on_click(cx.listener(|this, _, window, cx| {
                             if let Some(ix) = this.active {
@@ -2918,7 +2948,15 @@ impl Render for Workspace {
                     if can {
                         this.save_buffer(ix, true, window, cx);
                     } else {
-                        window.push_notification("No formatter for this file type", cx);
+                        let hint = this.buffers[ix]
+                            .path
+                            .as_deref()
+                            .and_then(formatter::missing_hint)
+                            .unwrap_or("There's no formatter for this file type.");
+                        window.push_notification(
+                            Notification::info(hint).title("No formatter installed").id::<FormatterNotice>(),
+                            cx,
+                        );
                     }
                 }
             }))

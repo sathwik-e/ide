@@ -51,7 +51,7 @@ pub struct Explorer {
     _watch_task: Option<Task<()>>,
 }
 
-const HIDDEN: &[&str] = &[".git", ".DS_Store", ".hg", ".svn"];
+const HIDDEN: &[&str] = &[".git", ".DS_Store", ".hg", ".svn", ".localized", "Icon\r", ".Spotlight-V100", ".Trashes", ".fseventsd"];
 
 fn read_dir_sorted(dir: &Path) -> Vec<(PathBuf, String, bool)> {
     let mut out: Vec<(PathBuf, String, bool)> = std::fs::read_dir(dir)
