@@ -173,4 +173,21 @@ mod tests {
         assert!(!can_format(Path::new("/tmp/x.unknownext")));
         assert!(missing_hint(Path::new("/tmp/x.unknownext")).is_none());
     }
+
+    #[test]
+    fn formats_python_when_a_formatter_is_installed() {
+        let dir = std::env::temp_dir().join(format!("orion-fmt-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("messy.py");
+        if !can_format(&file) {
+            eprintln!("no Python formatter installed; skipping");
+            return;
+        }
+        let messy = "x=[1,2,3]\ndef f( a,b ):\n  return a+b\n";
+        let out = format(&file, messy).expect("formatter runs");
+        assert!(out.contains("x = [1, 2, 3]"), "{out}");
+        assert!(out.contains("def f(a, b):"), "{out}");
+        assert!(out.contains("    return a + b"), "{out}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
