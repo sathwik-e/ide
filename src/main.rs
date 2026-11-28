@@ -12,6 +12,7 @@ mod http_client;
 mod icons;
 mod live_server;
 mod lsp;
+mod opener;
 mod palette;
 mod runner;
 mod search;
@@ -99,10 +100,30 @@ fn main() {
     }
     logger.init();
 
-    gpui_kit::application()
-        .with_assets(assets::Assets)
-        .run(|cx| {
+    // Files macOS asks us to open (Finder, Dock, `open -a`) arrive here,
+    // possibly before the window exists; they're queued and delivered.
+    let incoming = opener::Incoming::default();
+    let (wake_tx, wake_rx) = smol::channel::unbounded::<()>();
+    let app = gpui_kit::application().with_assets(assets::Assets);
+    {
+        let incoming = incoming.clone();
+        app.on_open_urls(move |urls| {
+            if let Ok(mut q) = incoming.0.lock() {
+                q.extend(opener::paths_from_urls(&urls));
+            }
+            let _ = wake_tx.try_send(());
+        });
+    }
+    app.on_reopen(|cx| opener::deliver(cx));
+    app.run(move |cx| {
             gpui_kit::init(cx);
+            cx.set_global(incoming.clone());
+            cx.spawn(async move |cx| {
+                while wake_rx.recv().await.is_ok() {
+                    let _ = cx.update(|cx| opener::deliver(cx));
+                }
+            })
+            .detach();
 
             if let Err(err) = cx.text_system().add_fonts(assets::font_bytes()) {
                 log::warn!("failed to load bundled fonts: {err}");
@@ -139,7 +160,7 @@ fn main() {
             if let Some(titlebar) = options.titlebar.as_mut() {
                 titlebar.traffic_light_position = Some(point(px(16.), px(16.)));
             }
-            gpui_kit::open_window(options, cx, |window, cx| {
+            let (handle, ws) = gpui_kit::open_window(options, cx, |window, cx| {
                 window.set_window_title(APP_NAME);
                 let ws = cx.new(|cx| Workspace::new(window, cx));
                 let focus = ws.focus_handle(cx);
@@ -147,5 +168,9 @@ fn main() {
                 ws
             })
             .expect("failed to open window");
+            cx.set_global(opener::OpenTarget {
+                window: handle,
+                workspace: ws.downgrade(),
+            });
         });
 }

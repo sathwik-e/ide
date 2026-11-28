@@ -38,10 +38,25 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleDocumentTypes</key>
   <array>
     <dict>
-      <key>CFBundleTypeName</key><string>Source Code</string>
+      <key>CFBundleTypeName</key><string>Source Code and Text</string>
       <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
       <key>LSItemContentTypes</key>
-      <array><string>public.text</string><string>public.source-code</string><string>public.folder</string></array>
+      <array><string>public.text</string><string>public.source-code</string><string>public.script</string><string>public.data</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Any File</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array><string>public.item</string><string>public.content</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>Folder</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array><string>public.folder</string><string>public.directory</string></array>
     </dict>
   </array>
 </dict>
@@ -49,5 +64,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 PLIST
 
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1 || true
+# Tell Launch Services about the bundle so Finder offers it in "Open With".
+LSREG=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+[ -x "$LSREG" ] && "$LSREG" -f "$APP" >/dev/null 2>&1 || true
 echo "Built $APP"
 echo "Install:  cp -R \"$APP\" /Applications/"

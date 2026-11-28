@@ -174,8 +174,8 @@ pub fn set_menus(cx: &mut App) {
             name: "File".into(),
             items: vec![
                 MenuItem::action("New File", NewFile),
+                MenuItem::action("Open…", OpenFolder),
                 MenuItem::action("Open File…", OpenFile),
-                MenuItem::action("Open Folder…", OpenFolder),
                 MenuItem::separator(),
                 MenuItem::action("Save", Save),
                 MenuItem::action("Save All", SaveAll),
@@ -259,7 +259,8 @@ enum BufferKind {
     Settings(Entity<SettingsView>),
     Diff(Entity<DiffState>, String),
     Image,
-    Binary,
+    /// First bytes of a non-text file (for the hex view) and its full size.
+    Binary(Rc<Vec<u8>>, u64),
 }
 
 struct Buffer {
@@ -540,17 +541,22 @@ impl Workspace {
         // Open the project after the first frame, so the window appears even
         // while macOS asks for folder access.
         cx.defer_in(window, |this, window, cx| {
-            let arg = std::env::args().nth(1).map(PathBuf::from);
-            match arg {
-                Some(p) if p.is_dir() => this.set_root(Some(p), window, cx),
-                Some(p) if p.is_file() => this.open_path(p, window, cx),
-                _ => {
-                    if let Some(last) = this.session.last_folder.clone().filter(|p| p.is_dir()) {
-                        this.set_root(Some(last), window, cx);
-                        this.restore_tabs(window, cx);
-                    }
+            let mut requested: Vec<PathBuf> = std::env::args()
+                .skip(1)
+                .filter(|a| !a.starts_with("-psn_") && !a.starts_with('-'))
+                .map(PathBuf::from)
+                .collect();
+            if let Some(incoming) = cx.try_global::<crate::opener::Incoming>().cloned() {
+                requested.extend(incoming.take());
+            }
+            let opens_folder = requested.iter().any(|p| p.is_dir());
+            if !opens_folder {
+                if let Some(last) = this.session.last_folder.clone().filter(|p| p.is_dir()) {
+                    this.set_root(Some(last), window, cx);
+                    this.restore_tabs(window, cx);
                 }
             }
+            this.open_paths(requested, window, cx);
             // A terminal is always docked and ready, without taking focus.
             this.spawn_terminal(None, false, window, cx);
         });
@@ -1055,12 +1061,15 @@ impl Workspace {
                     return;
                 }
             };
-            let binary = bytes.iter().take(8000).any(|b| *b == 0);
-            if binary {
+            let decoded = crate::opener::decode_text(&bytes);
+            if decoded.is_none() {
+                let total = bytes.len() as u64;
+                let mut head = bytes;
+                head.truncate(256 * 1024);
                 Buffer {
                     id,
                     path: Some(path),
-                    kind: BufferKind::Binary,
+                    kind: BufferKind::Binary(Rc::new(head), total),
                     language,
                     dirty: false,
                     tab: TabSize::default(),
@@ -1069,7 +1078,7 @@ impl Workspace {
                     _subscription: None,
                 }
             } else {
-                let text = String::from_utf8_lossy(&bytes).into_owned();
+                let text = decoded.unwrap_or_default();
                 let tab = detect_indent(&text, Settings::get(cx).tab_size);
                 let editor = self.make_editor(text, &language, window, cx);
                 let sub = self.subscribe_editor(id, &editor, window, cx);
@@ -1086,6 +1095,16 @@ impl Workspace {
                 }
             }
         };
+        log::info!(
+            "opened {} as {}",
+            buffer.path.as_deref().map(|p| p.display().to_string()).unwrap_or_default(),
+            match &buffer.kind {
+                BufferKind::Text(_) => "text",
+                BufferKind::Image => "image",
+                BufferKind::Binary(..) => "binary",
+                _ => "other",
+            }
+        );
         self.push_buffer(buffer, window, cx);
         self.attach_lsp(id, window, cx);
         self.save_tabs(cx);
@@ -1301,6 +1320,21 @@ impl Workspace {
                 cx,
             ),
         }
+    }
+
+    /// Re-open a binary buffer as (lossy) text in the editor.
+    fn open_as_text(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(path) = self.buffers.get(ix).and_then(|b| b.path.clone()) else { return };
+        let Ok(bytes) = std::fs::read(&path) else { return };
+        let text = String::from_utf8_lossy(&bytes).replace('\0', "\u{2400}");
+        let id = self.buffers[ix].id;
+        let editor = self.make_editor(text, "text", window, cx);
+        let sub = self.subscribe_editor(id, &editor, window, cx);
+        let b = &mut self.buffers[ix];
+        b.kind = BufferKind::Text(editor);
+        b.language = "text".into();
+        b._subscription = Some(sub);
+        self.activate(ix, window, cx);
     }
 
     fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1616,8 +1650,8 @@ impl Workspace {
             ("Terminal: New", Some("ctrl-shift-`"), Box::new(NewTerminal)),
             ("Find in Files", Some("cmd-shift-f"), Box::new(FindInFiles)),
             ("Go to Line", Some("ctrl-g"), Box::new(GoToLine)),
-            ("Open Folder…", Some("cmd-o"), Box::new(OpenFolder)),
-            ("Open File…", Some("cmd-shift-o"), Box::new(OpenFile)),
+            ("Open File or Folder…", Some("cmd-o"), Box::new(OpenFolder)),
+            ("Open File…", None, Box::new(OpenFile)),
             ("New File", Some("cmd-n"), Box::new(NewFile)),
             ("Save", Some("cmd-s"), Box::new(Save)),
             ("Save All", Some("cmd-alt-s"), Box::new(SaveAll)),
@@ -1717,40 +1751,47 @@ impl Workspace {
         }
     }
 
+    /// ⌘O: pick any files and/or a folder.
     fn open_folder_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let rx = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Open".into()),
-        });
-        cx.spawn_in(window, async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = rx.await {
-                if let Some(path) = paths.into_iter().next() {
-                    let _ = this.update_in(cx, |this, window, cx| this.set_root(Some(path), window, cx));
-                }
-            }
-        })
-        .detach();
+        self.prompt_open(true, true, window, cx);
     }
 
     fn open_file_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.prompt_open(true, false, window, cx);
+    }
+
+    fn prompt_open(&mut self, files: bool, directories: bool, window: &mut Window, cx: &mut Context<Self>) {
         let rx = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
+            files,
+            directories,
             multiple: true,
             prompt: Some("Open".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             if let Ok(Ok(Some(paths))) = rx.await {
-                let _ = this.update_in(cx, |this, window, cx| {
-                    for p in paths {
-                        this.open_path(p, window, cx);
-                    }
-                });
+                let _ = this.update_in(cx, |this, window, cx| this.open_paths(paths, window, cx));
             }
         })
         .detach();
+    }
+
+    /// Open whatever was asked for: a folder becomes the project, files open
+    /// as tabs. Works with or without a folder open.
+    pub fn open_paths(&mut self, paths: Vec<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        let (dirs, files): (Vec<PathBuf>, Vec<PathBuf>) = paths.into_iter().partition(|p| p.is_dir());
+        if let Some(dir) = dirs.into_iter().next() {
+            self.set_root(Some(dir), window, cx);
+        }
+        for file in files {
+            if file.exists() {
+                self.open_path(file, window, cx);
+            } else {
+                window.push_notification(
+                    Notification::warning(format!("{} doesn't exist", file.display())),
+                    cx,
+                );
+            }
+        }
     }
 
     // --------------------------------------------------------------- render
@@ -2130,7 +2171,7 @@ impl Workspace {
             .child(
                 v_flex()
                     .gap_2p5()
-                    .when(!has_root, |d| d.child(hint("⌘O", "Open Folder")))
+                    .when(!has_root, |d| d.child(hint("⌘O", "Open File or Folder")))
                     .child(hint("⌘P", "Go to File"))
                     .child(hint("⇧⌘P", "Commands"))
                     .child(hint("⌘N", "New File"))
@@ -2200,14 +2241,77 @@ impl Workspace {
                     .child(img(path).max_w_full().max_h_full().object_fit(ObjectFit::Contain))
                     .into_any_element()
             }
-            BufferKind::Binary => v_flex()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .text_sm()
-                .text_color(theme.muted_foreground)
-                .child("Binary file — not shown in the editor.")
-                .into_any_element(),
+            BufferKind::Binary(bytes, total) => {
+                let bytes = bytes.clone();
+                let rows = bytes.len().div_ceil(16);
+                let shown_all = bytes.len() as u64 >= *total;
+                let path = buffer.path.clone();
+                let mono = theme.mono_font_family.clone();
+                let muted = theme.muted_foreground;
+                let fg = theme.foreground;
+                v_flex()
+                    .size_full()
+                    .child(
+                        h_flex()
+                            .h(px(40.))
+                            .px_3()
+                            .gap_2()
+                            .border_b_1()
+                            .border_color(theme.border.opacity(0.6))
+                            .text_sm()
+                            .child(div().text_color(muted).child(format!(
+                                "Binary file · {}{}",
+                                crate::util::human_size(*total as usize),
+                                if shown_all { String::new() } else { " · showing the first 256 KB".into() }
+                            )))
+                            .child(div().flex_1())
+                            .child(
+                                Button::new("bin-as-text")
+                                    .small()
+                                    .ghost()
+                                    .icon(Lucide::FileText)
+                                    .label("Open as Text")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        if let Some(ix) = this.active {
+                                            this.open_as_text(ix, window, cx);
+                                        }
+                                    })),
+                            )
+                            .child(
+                                Button::new("bin-default-app")
+                                    .small()
+                                    .ghost()
+                                    .icon(Lucide::ExternalLink)
+                                    .label("Open with Default App")
+                                    .on_click(move |_, _, _| {
+                                        if let Some(p) = &path {
+                                            let _ = open::that(p);
+                                        }
+                                    }),
+                            ),
+                    )
+                    .child(
+                        uniform_list("hex-view", rows, move |range, _, _| {
+                            range
+                                .map(|row| {
+                                    let (off, hex, ascii) = crate::opener::hex_row(&bytes, row);
+                                    h_flex()
+                                        .h(px(20.))
+                                        .px_4()
+                                        .gap_4()
+                                        .font_family(mono.clone())
+                                        .text_xs()
+                                        .child(div().w(px(70.)).text_color(muted).child(off))
+                                        .child(div().w(px(380.)).text_color(fg).child(hex))
+                                        .child(div().text_color(muted).child(ascii))
+                                })
+                                .collect()
+                        })
+                        .flex_1()
+                        .py_2(),
+                    )
+                    .into_any_element()
+            }
         };
         v_flex()
             .size_full()

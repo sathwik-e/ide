@@ -34,6 +34,7 @@ Built on [GPUI](https://github.com/zed-industries/zed) (Zed's GPU-accelerated UI
 | **Tasks** | `⌥⌘R` runs project tasks: npm/yarn/pnpm/bun scripts, Cargo, Go, Swift, Make, just, Deno, pytest, docker compose. |
 | **Go to symbol** | `⇧⌘O`, or `@` in the palette. Works instantly with or without a language server. |
 | **Markdown preview** | `⇧⌘V`. Live side-by-side preview. |
+| **Open anything** | `⌘O` opens files or folders. Finder double-click, "Open With", dropping on the Dock icon, dragging onto the window and `open -a Orion <files>` all work. Any file opens: UTF-8, UTF-8 BOM and UTF-16 text decode automatically, images show as images, and binaries (PDFs, archives, executables) open in a hex viewer with *Open as Text* and *Open with Default App*. |
 | **Command palette / quick open** | `⌘P` for files (fuzzy), `>` for commands, `@` for symbols, `:` to go to a line. `⇧⌘P` opens directly into commands. |
 | **Find in files** | `⇧⌘F`. Respects `.gitignore`. |
 | **Themes & customization** | 18 built-in themes (Orion, Nebula, Aurora, Midnight, Supernova, Andromeda, Event Horizon, Mars, Saturn, Neptune, Pulsar, Titan, Galaxy, Comet, Lunar, Polaris, Cosmic Latte, Solstice), a **Custom theme** editor with color pickers for every UI and syntax color, drop-in JSON themes, accent colors, Glass/Solid window with Clear/Frosted/Tinted strength, fonts and sizes. All in Settings (gear in the title bar, or `⌘,`), applied instantly. |
