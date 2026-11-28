@@ -203,6 +203,25 @@ pub fn select_next_occurrence(editor: &mut EditorState, cx: &mut Context<EditorS
     }
 }
 
+/// Where `offset` lands after applying `edits` (sorted, non-overlapping,
+/// in pre-edit coordinates). Text inserted exactly at the offset goes after
+/// it, so a final newline added at the cursor doesn't push the cursor down.
+pub fn shift_offset(offset: usize, edits: &[(Range<usize>, String)]) -> usize {
+    let mut delta: isize = 0;
+    for (range, new) in edits {
+        if range.start >= offset {
+            break;
+        }
+        if range.end <= offset {
+            delta += new.len() as isize - range.len() as isize;
+        } else {
+            // The cursor was inside removed text: put it where that text began.
+            return (range.start as isize + delta) as usize;
+        }
+    }
+    (offset as isize + delta).max(0) as usize
+}
+
 /// Minimal edits that trim trailing whitespace and ensure a final newline.
 pub fn tidy_edits(text: &str, trim: bool, final_newline: bool) -> Vec<(Range<usize>, String)> {
     let mut edits = Vec::new();
@@ -254,6 +273,20 @@ mod tests {
         assert_eq!(tidy("a  \nb\t", true, true), "a\nb\n");
         assert_eq!(tidy("a  ", false, true), "a  \n");
         assert_eq!(tidy("", true, true), "");
+    }
+
+    #[test]
+    fn cursor_stays_put_through_cleanup() {
+        // Typing at the end: adding the final newline must not move the cursor.
+        let text = "print(1)";
+        let edits = tidy_edits(text, true, true);
+        assert_eq!(shift_offset(text.len(), &edits), text.len());
+        // Trailing spaces earlier in the file shift the cursor back.
+        let text = "a  \nbc";
+        let edits = tidy_edits(text, true, false);
+        assert_eq!(shift_offset(6, &edits), 4); // after "bc"
+        // Cursor inside trimmed whitespace lands at the end of the kept text.
+        assert_eq!(shift_offset(2, &edits), 1);
     }
 
     #[test]

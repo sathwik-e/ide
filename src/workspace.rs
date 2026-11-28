@@ -358,6 +358,7 @@ pub struct Workspace {
     closed: Vec<PathBuf>,
     zen: Option<(bool, bool, Option<Tool>)>,
     sync_pending: bool,
+    auto_save_gen: u64,
     format_error: Option<String>,
     session: Session,
     _index_task: Option<Task<()>>,
@@ -542,6 +543,7 @@ impl Workspace {
             closed: Vec::new(),
             zen: None,
             sync_pending: false,
+            auto_save_gen: 0,
             format_error: None,
             session,
             _index_task: None,
@@ -1018,13 +1020,22 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Auto-save once typing pauses. It writes the text exactly as it is and
+    /// never edits the buffer (no formatting, no whitespace cleanup), so it
+    /// can't move the cursor or fight what you're typing.
     fn schedule_auto_save(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        self.auto_save_gen += 1;
+        let generation = self.auto_save_gen;
         cx.spawn_in(window, async move |this, cx| {
-            smol::Timer::after(std::time::Duration::from_millis(900)).await;
+            smol::Timer::after(std::time::Duration::from_millis(1000)).await;
             let _ = this.update_in(cx, |this, window, cx| {
-                if let Some(ix) = this.buffers.iter().position(|b| b.id == id && b.dirty && b.path.is_some()) {
-                    this.save_buffer(ix, false, window, cx);
+                if this.auto_save_gen != generation {
+                    return; // still typing
                 }
+                let Some(b) = this.buffers.iter().find(|b| b.id == id && b.dirty) else { return };
+                let (Some(path), Some(editor)) = (b.path.clone(), b.editor().cloned()) else { return };
+                let text = editor.read(cx).value().to_string();
+                this.write_file(id, &path, &text, window, cx);
             });
         })
         .detach();
@@ -1266,7 +1277,14 @@ impl Workspace {
             let current = editor.read(cx).value().to_string();
             let edits = editing::tidy_edits(&current, trim, final_nl);
             if !edits.is_empty() {
-                editor.update(cx, |e, cx| e.replace_text_in_ranges(&edits, window, cx));
+                editor.update(cx, |e, cx| {
+                    // Keep the cursor/selection where it was relative to the text.
+                    let sel = e.selected_range();
+                    e.replace_text_in_ranges(&edits, window, cx);
+                    let start = editing::shift_offset(sel.start, &edits);
+                    let end = editing::shift_offset(sel.end, &edits);
+                    e.set_selected_range(start..end, cx);
+                });
             }
         }
         let text = editor.read(cx).value().to_string();
